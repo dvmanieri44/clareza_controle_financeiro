@@ -1,0 +1,23 @@
+"use client";
+import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useTheme } from "next-themes";
+import { ArrowLeftRight, ChartNoAxesCombined, CircleHelp, CreditCard, FolderHeart, LayoutDashboard, Leaf, Loader2, LogOut, Menu, Moon, Repeat2, Settings2, Sun, Tags, Target, Wallet, X } from "lucide-react";
+import { toast } from "sonner";
+import { firebaseConfigured } from "@/lib/firebase/client";
+import { useFinance } from "./providers";
+import { SetupScreen } from "./setup-screen";
+import { Button } from "./ui/button";
+import { cn } from "@/lib/utils";
+const nav = [
+  ["dashboard", "Visão geral", LayoutDashboard], ["transacoes", "Transações", ArrowLeftRight], ["contas", "Minhas contas", Wallet], ["cartoes", "Cartões de crédito", CreditCard],
+  ["orcamentos", "Orçamentos", ChartNoAxesCombined], ["metas", "Metas financeiras", Target], ["investimentos", "Investimentos", FolderHeart], ["categorias", "Categorias", Tags], ["recorrencias", "Recorrências", Repeat2],
+] as const;
+export function AppShell({ children }: { children: ReactNode }) {
+  const { user, loading, error, dataLoading, logout } = useFinance(); const router = useRouter(); const pathname = usePathname(); const { resolvedTheme, setTheme } = useTheme(); const [menu, setMenu] = useState(false);
+  useEffect(() => { if (firebaseConfigured && !loading && !user) router.replace("/login"); }, [loading, user, router]);
+  if (!firebaseConfigured) return <SetupScreen />;
+  if (loading || !user) return <div className="loading-page"><Loader2 className="animate-spin" />Abrindo seu espaço…</div>;
+  return <div className="app-layout">{menu && <button className="fixed inset-0 z-30 bg-black/40 lg:hidden" aria-label="Fechar navegação" onClick={() => setMenu(false)} />}<aside className={cn("sidebar", menu && "sidebar-open")}><Link href="/dashboard" className="brand"><span className="brand-symbol"><Leaf size={23} /></span>clareza<span className="text-primary">.</span></Link><button className="absolute right-4 top-6 lg:hidden" aria-label="Fechar menu" onClick={() => setMenu(false)}><X /></button><p className="nav-label">SEU ESPAÇO FINANCEIRO</p><nav aria-label="Navegação principal" className="space-y-1">{nav.map(([key, label, Icon]) => <Link key={key} href={`/${key}`} onClick={() => setMenu(false)} className={cn("nav-link", pathname === `/${key}` && "active")}><Icon size={18} />{label}{pathname === `/${key}` && <span className="ml-auto size-1.5 rounded-full bg-primary" />}</Link>)}</nav><div className="mt-auto"><div className="sidebar-note"><CircleHelp size={18} /><p>Pequenos passos.<br /><span className="font-medium">Grandes conquistas.</span></p></div><Link href="/configuracoes" className={cn("nav-link", pathname === "/configuracoes" && "active")} onClick={() => setMenu(false)}><Settings2 size={18} />Configurações</Link><button className="nav-link w-full" onClick={() => logout().catch(() => toast.error("Não foi possível sair. Tente novamente."))}><LogOut size={18} />Sair da conta</button><div className="profile"><span className="avatar">{user.email?.slice(0, 1).toUpperCase()}</span><div className="min-w-0"><p className="truncate text-sm font-medium">Minha conta</p><p className="truncate text-xs text-muted-foreground">{user.email}</p></div></div></div></aside><div className="main-column"><header className="topbar"><div className="flex items-center gap-3"><Button variant="ghost" size="icon" className="lg:hidden" aria-label="Abrir menu" onClick={() => setMenu(true)}><Menu /></Button><span className="text-sm text-muted-foreground">Organizador financeiro pessoal</span></div><div className="flex items-center gap-4"><span className="hidden items-center gap-2 text-xs text-muted-foreground sm:flex"><span className="size-1.5 rounded-full bg-emerald-500" />Seu espaço pessoal</span><Button variant="ghost" size="icon" aria-label="Alternar tema claro e escuro" onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}><Sun className="hidden dark:block" /><Moon className="dark:hidden" /></Button></div></header><main className="main-content">{error ? <div className="error-box" role="alert"><h1 className="mb-2 font-semibold">Não foi possível carregar seus dados</h1>{error}<div className="mt-4"><Button variant="outline" onClick={() => window.location.reload()}>Tentar novamente</Button></div></div> : dataLoading ? <div className="loading-page min-h-[50vh]"><Loader2 className="animate-spin" />Buscando seus dados…</div> : children}</main><footer className="page-footer">CLAREZA FINANCEIRA, UM DIA DE CADA VEZ.<span>Feito para sua vida real.</span></footer></div></div>;
+}

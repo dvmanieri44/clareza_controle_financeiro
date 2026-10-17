@@ -1,0 +1,124 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+    function text(v, max) { return v is string && v.size() <= max; }
+    function label(v) { return text(v, 120) && v.size() >= 2; }
+    function money(v) { return v is int && v >= 0 && v <= 9000000000000; }
+    function signedMoney(v) { return v is int && v >= -9000000000000 && v <= 9000000000000; }
+    function day(v) { return v is string && v.matches('^(19|20|21)[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$'); }
+    function optionalDay(v) { return v == '' || day(v); }
+    function month(v) { return v is string && v.matches('^(19|20|21)[0-9]{2}-(0[1-9]|1[0-2])$'); }
+    function color(v) { return v is string && v.matches('^#[a-fA-F0-9]{6}$'); }
+    function created(d) { return text(d.createdAt, 40) && d.createdAt.size() >= 20; }
+    function stableCreated() { return request.resource.data.createdAt == resource.data.createdAt; }
+    function accountExists(uid, id) { return id is string && id.size() > 0 && exists(/databases/$(database)/documents/users/$(uid)/accounts/$(id)); }
+    function categoryMatches(uid, id, type) { return id is string && id.size() > 0 && get(/databases/$(database)/documents/users/$(uid)/categories/$(id)).data.type == type; }
+    function cardExists(uid, id) { return id is string && id.size() > 0 && exists(/databases/$(database)/documents/users/$(uid)/cards/$(id)); }
+    function invoiceUnpaid(uid, d) { return !exists(/databases/$(database)/documents/users/$(uid)/entries/$('invoice_' + d.cardId + '_' + d.invoiceMonth)); }
+    function cardBumped(uid, id) { return getAfter(/databases/$(database)/documents/users/$(uid)/cards/$(id)).data.revision == get(/databases/$(database)/documents/users/$(uid)/cards/$(id)).data.revision + 1; }
+    function validEntry(uid, d, id) {
+      return d.keys().hasOnly(['createdAt','kind','description','amount','date','dueDate','status','accountId','toAccountId','categoryId','cardId','invoiceMonth','groupId','installment','installments','notes','recurrenceId'])
+        && created(d) && label(d.description) && money(d.amount) && d.amount > 0 && day(d.date) && optionalDay(d.dueDate)
+        && d.status in ['pending','settled'] && text(d.notes,1000) && text(d.recurrenceId,120)
+        && text(d.accountId,120) && text(d.toAccountId,120) && text(d.categoryId,120) && text(d.cardId,120) && text(d.groupId,120)
+        && d.installment is int && d.installments is int
+        && (
+          (d.kind in ['income','expense'] && accountExists(uid,d.accountId) && categoryMatches(uid,d.categoryId,d.kind)
+            && d.toAccountId == '' && d.cardId == '' && d.invoiceMonth == '' && d.groupId == '' && d.installment == 0 && d.installments == 0
+            && (d.recurrenceId == '' || exists(/databases/$(database)/documents/users/$(uid)/recurrences/$(d.recurrenceId))))
+          || (d.kind == 'transfer' && d.status == 'settled' && d.accountId != d.toAccountId && accountExists(uid,d.accountId) && accountExists(uid,d.toAccountId)
+            && d.cardId == '' && d.categoryId == '' && d.invoiceMonth == '' && d.groupId == '' && d.installment == 0 && d.installments == 0 && d.recurrenceId == '')
+          || (d.kind == 'purchase' && d.status == 'pending' && d.accountId == '' && d.toAccountId == '' && cardExists(uid,d.cardId)
+            && categoryMatches(uid,d.categoryId,'expense') && month(d.invoiceMonth) && day(d.dueDate) && d.groupId.size() > 0
+            && d.installments >= 1 && d.installments <= 12 && d.installment >= 1 && d.installment <= d.installments && d.recurrenceId == ''
+            && invoiceUnpaid(uid,d) && cardBumped(uid,d.cardId))
+          || (d.kind == 'invoicePayment' && d.status == 'settled' && accountExists(uid,d.accountId) && cardExists(uid,d.cardId) && month(d.invoiceMonth)
+            && id == 'invoice_' + d.cardId + '_' + d.invoiceMonth && d.toAccountId == '' && d.categoryId == '' && d.groupId == ''
+            && d.installment == 0 && d.installments == 0 && d.recurrenceId == '' && cardBumped(uid,d.cardId))
+        );
+    }
+    match /users/{uid} {
+      allow read: if owner(uid);
+      allow create: if owner(uid) && request.resource.data.keys().hasOnly(['createdAt','version']) && created(request.resource.data) && request.resource.data.version == 1;
+      allow update, delete: if false;
+      match /accounts/{id} {
+        function valid(d) { return d.keys().hasOnly(['name','type','initialBalance','color','archived','createdAt']) && label(d.name) && d.type in ['Conta corrente','Poupança','Dinheiro','Carteira digital','Investimentos'] && signedMoney(d.initialBalance) && color(d.color) && d.archived is bool && created(d); }
+        allow read: if owner(uid);
+        allow create: if owner(uid) && valid(request.resource.data);
+        allow update: if owner(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.initialBalance == resource.data.initialBalance;
+        allow delete: if false;
+      }
+      match /categories/{id} {
+        function valid(d) { return d.keys().hasOnly(['name','type','color','icon','archived','createdAt']) && label(d.name) && d.type in ['income','expense'] && color(d.color) && d.icon in ['tag','utensils','home','car','heart','book','sparkles','wallet'] && d.archived is bool && created(d); }
+        allow read: if owner(uid);
+        allow create: if owner(uid) && valid(request.resource.data);
+        allow update: if owner(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.type == resource.data.type;
+        allow delete: if false;
+      }
+      match /cards/{id} {
+        function valid(d) { return d.keys().hasOnly(['name','limit','closingDay','dueDay','color','archived','revision','createdAt']) && label(d.name) && money(d.limit) && d.limit > 0 && d.closingDay is int && d.closingDay >= 1 && d.closingDay <= 31 && d.dueDay is int && d.dueDay >= 1 && d.dueDay <= 31 && color(d.color) && d.archived is bool && d.revision is int && d.revision >= 1 && created(d); }
+        allow read: if owner(uid);
+        allow create: if owner(uid) && valid(request.resource.data) && request.resource.data.revision == 1;
+        allow update: if owner(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.revision == resource.data.revision + 1;
+        allow delete: if false;
+      }
+      match /entries/{id} {
+        allow read: if owner(uid);
+        allow create: if owner(uid) && validEntry(uid,request.resource.data,id);
+        allow update: if owner(uid) && resource.data.kind in ['income','expense'] && request.resource.data.kind in ['income','expense'] && stableCreated() && request.resource.data.recurrenceId == resource.data.recurrenceId && validEntry(uid,request.resource.data,id);
+        allow delete: if owner(uid) && ((resource.data.kind in ['income','expense','transfer'] && resource.data.recurrenceId == '') || (resource.data.kind == 'purchase' && invoiceUnpaid(uid,resource.data) && cardBumped(uid,resource.data.cardId)));
+      }
+      match /budgets/{id} {
+        function valid(d) { return d.keys().hasOnly(['categoryId','month','amount','createdAt']) && created(d) && month(d.month) && categoryMatches(uid,d.categoryId,'expense') && money(d.amount) && d.amount > 0 && id == d.categoryId + '_' + d.month; }
+        allow read: if owner(uid);
+        allow create: if owner(uid) && valid(request.resource.data);
+        allow update: if owner(uid) && valid(request.resource.data) && stableCreated();
+        allow delete: if owner(uid);
+      }
+      match /goals/{id} {
+        function valid(d) { return d.keys().hasOnly(['name','target','current','deadline','archived','lastMovementId','createdAt']) && created(d) && label(d.name) && money(d.target) && d.target > 0 && money(d.current) && optionalDay(d.deadline) && d.archived is bool && text(d.lastMovementId,120); }
+        function validMovement() {
+          let movement = getAfter(/databases/$(database)/documents/users/$(uid)/goalMovements/$(request.resource.data.lastMovementId));
+          return request.resource.data.lastMovementId != ''
+            && !exists(/databases/$(database)/documents/users/$(uid)/goalMovements/$(request.resource.data.lastMovementId))
+            && movement.data.goalId == id && request.resource.data.current == resource.data.current + movement.data.amount;
+        }
+        allow read: if owner(uid);
+        allow create: if owner(uid) && valid(request.resource.data) && request.resource.data.current == 0 && request.resource.data.lastMovementId == '';
+        allow update: if owner(uid) && valid(request.resource.data) && stableCreated()
+          && ((request.resource.data.current == resource.data.current && request.resource.data.lastMovementId == resource.data.lastMovementId) || validMovement());
+        allow delete: if false;
+      }
+      match /goalMovements/{id} {
+        allow read: if owner(uid);
+        allow create: if owner(uid) && request.resource.data.keys().hasOnly(['goalId','amount','date','notes','createdAt']) && created(request.resource.data) && signedMoney(request.resource.data.amount) && request.resource.data.amount != 0 && day(request.resource.data.date) && text(request.resource.data.notes,1000)
+          && getAfter(/databases/$(database)/documents/users/$(uid)/goals/$(request.resource.data.goalId)).data.current == get(/databases/$(database)/documents/users/$(uid)/goals/$(request.resource.data.goalId)).data.current + request.resource.data.amount
+          && getAfter(/databases/$(database)/documents/users/$(uid)/goals/$(request.resource.data.goalId)).data.lastMovementId == id;
+        allow update,delete: if false;
+      }
+      match /investments/{id} {
+        function valid(d) { return d.keys().hasOnly(['name','type','institution','invested','current','date','archived','createdAt']) && label(d.name) && label(d.institution) && d.type in ['CDB','Tesouro Direto','LCI','LCA','Ações','Fundos','Outros'] && money(d.invested) && money(d.current) && day(d.date) && d.archived is bool && created(d); }
+        allow read: if owner(uid);
+        allow create: if owner(uid) && valid(request.resource.data);
+        allow update: if owner(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.date >= resource.data.date;
+        allow delete: if false;
+      }
+      match /snapshots/{id} {
+        allow read: if owner(uid);
+        allow create: if owner(uid) && request.resource.data.keys().hasOnly(['investmentId','invested','current','date','createdAt']) && created(request.resource.data) && money(request.resource.data.invested) && money(request.resource.data.current) && day(request.resource.data.date)
+          && getAfter(/databases/$(database)/documents/users/$(uid)/investments/$(request.resource.data.investmentId)).data.current == request.resource.data.current
+          && getAfter(/databases/$(database)/documents/users/$(uid)/investments/$(request.resource.data.investmentId)).data.invested == request.resource.data.invested;
+        allow update,delete: if false;
+      }
+      match /recurrences/{id} {
+        function valid(d) { return d.keys().hasOnly(['description','amount','kind','accountId','categoryId','startDate','endDate','notes','archived','createdAt']) && label(d.description) && money(d.amount) && d.amount > 0 && d.kind in ['income','expense'] && accountExists(uid,d.accountId) && categoryMatches(uid,d.categoryId,d.kind) && day(d.startDate) && optionalDay(d.endDate) && (d.endDate == '' || d.endDate >= d.startDate) && text(d.notes,1000) && d.archived is bool && created(d); }
+        allow read: if owner(uid);
+        allow create: if owner(uid) && valid(request.resource.data);
+        allow update: if owner(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived']);
+        allow delete: if false;
+      }
+    }
+    match /{document=**} { allow read,write: if false; }
+  }
+}

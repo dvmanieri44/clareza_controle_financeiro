@@ -1,0 +1,12 @@
+node_modules/
+.npm-cache/
+.next/
+out/
+.env*
+!.env.example
+*.tsbuildinfo
+*-debug.log
+firebase-debug.log
+firestore-debug.log
+.firebase/
+artifacts/
