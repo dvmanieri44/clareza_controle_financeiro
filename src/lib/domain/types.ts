@@ -15,10 +15,11 @@ export interface GoalMovement extends Base { goalId: string; amount: number; dat
 export interface Investment extends Base { name: string; type: string; institution: string; invested: number; current: number; date: string; archived: boolean; }
 export interface Snapshot extends Base { investmentId: string; invested: number; current: number; date: string; }
 export interface Recurrence extends Base { description: string; amount: number; kind: "income" | "expense"; accountId: string; categoryId: string; startDate: string; endDate: string; notes: string; archived: boolean; }
-export interface CollectionMap { accounts: Account; categories: Category; entries: Entry; cards: Card; budgets: Budget; goals: Goal; goalMovements: GoalMovement; investments: Investment; snapshots: Snapshot; recurrences: Recurrence; }
+export interface ImportRule extends Base { pattern: string; match: "exact" | "contains"; categoryId: string; }
+export interface CollectionMap { accounts: Account; categories: Category; entries: Entry; cards: Card; budgets: Budget; goals: Goal; goalMovements: GoalMovement; investments: Investment; snapshots: Snapshot; recurrences: Recurrence; importRules: ImportRule; }
 export type CollectionName = keyof CollectionMap;
 export type FinanceData = { [K in CollectionName]: CollectionMap[K][] };
-export const collections: CollectionName[] = ["accounts", "categories", "entries", "cards", "budgets", "goals", "goalMovements", "investments", "snapshots", "recurrences"];
-export const emptyData: FinanceData = { accounts: [], categories: [], entries: [], cards: [], budgets: [], goals: [], goalMovements: [], investments: [], snapshots: [], recurrences: [] };
+export const collections: CollectionName[] = ["accounts", "categories", "entries", "cards", "budgets", "goals", "goalMovements", "investments", "snapshots", "recurrences", "importRules"];
+export const emptyData: FinanceData = { accounts: [], categories: [], entries: [], cards: [], budgets: [], goals: [], goalMovements: [], investments: [], snapshots: [], recurrences: [], importRules: [] };
 export const accountTypes = ["Conta corrente", "Poupança", "Dinheiro", "Carteira digital", "Investimentos"] as const;
 export const investmentTypes = ["CDB", "Tesouro Direto", "LCI", "LCA", "Ações", "Fundos", "Outros"];

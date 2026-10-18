@@ -16,7 +16,7 @@ const nav = [
   ["orcamentos", "Orçamentos", ChartNoAxesCombined], ["metas", "Metas financeiras", Target], ["investimentos", "Investimentos", FolderHeart], ["categorias", "Categorias", Tags], ["recorrencias", "Contas recorrentes", Repeat2],
 ] as const;
 export function AppShell({ children }: { children: ReactNode }) {
-  const { user, loading, error, dataLoading, logout } = useFinance();
+  const { user, loading, error, dataLoading, deletionPending, logout } = useFinance();
   const router = useRouter();
   const pathname = usePathname().replace(/\/$/, "") || "/";
   const { resolvedTheme, setTheme } = useTheme();
@@ -24,6 +24,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const previousPath = useRef(pathname);
   const navigating = useRef(false);
   useEffect(() => { if (firebaseConfigured && !loading && !user) router.replace("/login"); }, [loading, user, router]);
+  useEffect(() => { if (deletionPending && pathname !== "/configuracoes") router.replace("/configuracoes"); }, [deletionPending, pathname, router]);
   useEffect(() => {
     const desktop = window.matchMedia("(min-width: 1024px)");
     const closeOnDesktop = () => { if (desktop.matches) setMenu(false); };
@@ -55,7 +56,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
         <main id="main-content" tabIndex={-1} className="main-content" aria-busy={dataLoading}>
-          {error ? <div className="error-box" role="alert"><h1 className="mb-2 font-semibold">Não foi possível carregar seus dados</h1>{error}<div className="mt-4"><Button variant="outline" onClick={() => window.location.reload()}>Tentar novamente</Button></div></div> : dataLoading ? <div className="loading-page min-h-[50vh]" role="status"><Loader2 aria-hidden="true" className="animate-spin" />Buscando seus dados…</div> : children}
+          {deletionPending && pathname !== "/configuracoes" ? <p role="status">Sua conta está em exclusão. Abrindo configurações…</p> : error ? <div className="error-box" role="alert"><h1 className="mb-2 font-semibold">Não foi possível carregar seus dados</h1>{error}<div className="mt-4"><Button variant="outline" onClick={() => window.location.reload()}>Tentar novamente</Button></div></div> : dataLoading ? <div className="loading-page min-h-[50vh]" role="status"><Loader2 aria-hidden="true" className="animate-spin" />Buscando seus dados…</div> : children}
         </main>
       </div>
     </div>

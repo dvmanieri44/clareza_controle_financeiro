@@ -1,5 +1,15 @@
 # Melhorias solicitadas
 
+## Atualização de 18/10/2026
+
+- [x] Item 11 da lista para portfólio: regras de categorias por descrição inteira/palavras contidas, sugestões editáveis na prévia, memória opcional salva atomicamente com compras novas e destaque de compras semelhantes por descrição normalizada. Gerenciamento de regras nas configurações.
+- [x] Item 12 da lista para portfólio: alteração de senha com reautenticação, explicação de privacidade e exclusão da conta com senha, confirmação EXCLUIR, bloqueio de gravações, lotes e retomada.
+- [x] Lint, TypeScript, 237 testes unitários e builds Node/Pages aprovados; exportação de rotas/assets validada.
+- [ ] Executar os testes das novas regras com Java 21+, medir cobertura com o provedor V8 e publicar `firestore.rules` antes da interface. Bloqueios locais detalhados em VALIDACAO.md.
+- [ ] Validar no navegador com contas descartáveis: alterar senha, testar senha anterior/nova, interromper/retomar exclusão e confirmar ausência de documentos e do usuário Auth. Nunca usar uma conta financeira real para esse teste.
+
+## Registro de 17/10/2026
+
 Solicitações de 17/10/2026. Os checks abaixo distinguem implementação local de publicação. Commits devem usar Conventional Commits, a identidade Git do usuário e nenhuma coautoria do assistente.
 
 ## Implementado localmente

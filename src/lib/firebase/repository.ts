@@ -5,6 +5,8 @@ import { firstInvoiceMonth, goalAfterMovement, invoiceTotal, monthDate, paymentI
 import { accountSchema, cardSchema, cents, date, entrySchema, name, positiveCents } from "../domain/schemas";
 import { z } from "zod";
 import { validateInvoiceImport, type InvoiceImportItem } from "../domain/invoice-import";
+import { importRuleId, normalizeDescription, rememberedRules, validateRule } from "../domain/import-rules";
+import { deletionRemembered } from "./deletion-state";
 
 export function userCollection(uid: string, key: CollectionName) { return collection(firebase().db, "users", uid, key); }
 function ref(uid: string, key: CollectionName, id?: string) { return id ? doc(userCollection(uid, key), id) : doc(userCollection(uid, key)); }
@@ -23,6 +25,8 @@ export function errorMessage(error: unknown) {
   if (code.includes("email-already-in-use")) return "Este e-mail já está cadastrado.";
   if (code.includes("too-many-requests")) return "Muitas tentativas. Aguarde alguns minutos.";
   if (code.includes("weak-password")) return "Use uma senha com pelo menos 8 caracteres.";
+  if (code.includes("requires-recent-login")) return "Confirme sua senha atual novamente para continuar.";
+  if (code.includes("auth/user-token-expired")) return "Sua sessão expirou. Entre novamente para continuar.";
   if (code.includes("invalid-api-key")) return "A configuração do Firebase é inválida. Verifique .env.local.";
   if (code.includes("auth/operation-not-allowed")) return "Habilite o provedor E-mail/senha no Firebase Authentication.";
   if (code.includes("auth/unauthorized-domain")) return "Adicione este domínio aos domínios autorizados do Firebase Authentication.";
@@ -33,9 +37,11 @@ export function errorMessage(error: unknown) {
 export async function initializeUser(uid: string) {
   const db = firebase().db;
   const profile = doc(db, "users", uid);
-  await runTransaction(db, async tx => {
+  return runTransaction(db, async tx => {
     const snap = await tx.get(profile);
-    if (snap.exists()) return;
+    if (snap.exists()) return !!snap.data().deletionStartedAt;
+    // Não recria categorias se a última etapa foi interrompida após remover o perfil.
+    if (deletionRemembered(uid)) return true;
     tx.set(profile, { createdAt: stamp(), version: 1 });
     const defaults = [
       ["alimentacao", "Alimentação", "expense", "#f59e0b", "utensils"], ["moradia", "Moradia", "expense", "#8b5cf6", "home"],
@@ -45,6 +51,7 @@ export async function initializeUser(uid: string) {
       ["outros-despesa", "Outras despesas", "expense", "#64748b", "tag"],
     ];
     for (const [id, categoryName, type, color, icon] of defaults) tx.set(ref(uid, "categories", id), { name: categoryName, type, color, icon, archived: false, createdAt: stamp() });
+    return false;
   });
 }
 export async function saveAccount(uid: string, data: z.infer<typeof accountSchema>, id?: string) {
@@ -189,8 +196,9 @@ export async function generateRecurrences(uid: string, rules: Recurrence[], thro
   }
   return count;
 }
-export async function importInvoice(uid: string, cardId: string, month: string, items: InvoiceImportItem[]) {
+export async function importInvoice(uid: string, cardId: string, month: string, items: InvoiceImportItem[], rememberCategories = false) {
   const valid = validateInvoiceImport(items, month);
+  const rules = rememberCategories ? await Promise.all(rememberedRules(valid).map(async rule => ({ ...rule, id: await importRuleId(rule.pattern, rule.match) }))) : [];
   const db = firebase().db;
   return runTransaction(db, async tx => {
     const targets = valid.map(item => ref(uid, "entries", `${item.id}_1`));
@@ -204,6 +212,9 @@ export async function importInvoice(uid: string, cardId: string, month: string, 
       const category = await requireActive(tx, uid, "categories", categoryId);
       if (category.type !== "expense") throw new Error("Use categorias de despesa para importar compras.");
     }
+    const pendingDescriptions = new Set(pending.map(({ item }) => normalizeDescription(item.description)));
+    const toRemember = rules.filter(rule => pendingDescriptions.has(rule.pattern));
+    const previousRules = await Promise.all(toRemember.map(rule => tx.get(ref(uid, "importRules", rule.id))));
     // Todas as leituras precedem as escritas; cada linha é somente a parcela desta fatura.
     for (const { item, target } of pending) tx.set(target, {
       ...emptyEntry, kind: "purchase", status: "pending", cardId, invoiceMonth: month,
@@ -212,8 +223,23 @@ export async function importInvoice(uid: string, cardId: string, month: string, 
       notes: "Importado do CSV Nubank. Lançamento somente desta fatura; não gera parcelas futuras.", createdAt: stamp(),
     });
     tx.update(ref(uid, "cards", cardId), { revision: card.revision + 1 });
+    toRemember.forEach(({ id, ...rule }, index) => tx.set(ref(uid, "importRules", id), { ...rule, createdAt: previousRules[index].data()?.createdAt || stamp() }));
     return { added: pending.length, skipped: valid.length - pending.length };
   });
+}
+export async function saveImportRule(uid: string, pattern: string, match: "exact" | "contains", categoryId: string) {
+  const valid = validateRule(pattern, match, categoryId);
+  const target = ref(uid, "importRules", await importRuleId(valid.pattern, valid.match));
+  await runTransaction(firebase().db, async tx => {
+    const category = await requireActive(tx, uid, "categories", categoryId);
+    const previous = await tx.get(target);
+    if (category.type !== "expense") throw new Error("Escolha uma categoria de despesa.");
+    tx.set(target, { ...valid, createdAt: previous.data()?.createdAt || stamp() });
+  });
+}
+export async function deleteImportRule(uid: string, id: string) {
+  const { deleteDoc } = await import("firebase/firestore");
+  await deleteDoc(ref(uid, "importRules", id));
 }
 // Tipos auxiliares exportados para a camada de interface.
 export type { Account, DocumentData };

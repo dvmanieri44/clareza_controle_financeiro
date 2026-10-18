@@ -1,5 +1,19 @@
 # Validação da implementação
 
+## Atualização de 18/10/2026 — importação e conta
+
+- Implementados os itens 11 e 12: sugestões e memória opcional de categorias na importação, gerenciamento de regras, duplicatas por descrição normalizada, alteração de senha, privacidade e exclusão retomável da conta.
+- `npm run lint` e `npm run typecheck` aprovados.
+- `npm test`: **237 testes em dez arquivos**, aprovados. Incluem prioridade e conflito de regras, descrições normalizadas, persistência na mesma transação da importação, gerenciamento de regras, senha/reauth, exclusão em lotes, isolamento de usuários no serviço, falhas parciais, inicialização e retomada. Os testes do serviço Firebase usam mocks e não comprovam integração real.
+- Build Node aprovado; build Pages e `npm run verify:pages` aprovados (12 rotas, 404 e 224 referências a assets).
+- Acrescentados cinco cenários às regras do Firestore: regras de importação, login recente para exclusão, bloqueio de novas gravações, exclusão de registros imutáveis e importação de 200 compras com 200 regras em até dez categorias.
+- **Regras ainda não executadas neste ambiente:** o CLI encontrou primeiro uma configuração global inacessível; com configuração isolada, confirmou Java 17, incompatível com a exigência de Java 21+. A execução ampliada falhou ao preparar o processo (`helper_unknown_error`). O CI já utiliza Java 21 e deve executar estes testes antes da publicação.
+- **Cobertura não medida:** download de `@vitest/coverage-v8@5.0.5` bloqueado por `EACCES`; execução ampliada também falhou ao preparar o processo. As metas não foram afrouxadas, e o novo módulo puro `import-rules.ts` entrou no escopo.
+- Publicar o novo `firestore.rules` antes de usar esta interface. Nenhum dado real foi alterado/excluído para validar o fluxo.
+- Validação visual e testes no navegador/Firebase real continuam pendentes. A exclusão depende da página aberta e não é atômica entre Authentication e Firestore; interrupções exigem retomada, conforme o README.
+
+## Registro anterior
+
 Verificação local em 17/10/2026, com Node.js 24.18.0, npm 11.16.0, Next.js 16.4.2 e Vitest 5.0.5.
 
 ## Verificado

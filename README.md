@@ -93,6 +93,8 @@ Os arquivos gerados ficam em `out`. Para desenvolvimento ou hospedagem Node.js, 
 - Contas com tipo/cor/saldo inicial e transferências atômicas sem gerar receita ou despesa.
 - Cartões, compras em até **12 parcelas**, faturas por competência, pagamento integral sem duplicar despesas e exclusão de compras cujas faturas ainda não foram pagas.
 - Importação local de fatura Nubank em CSV, com prévia editável, seleção de categorias e compras, confirmação e proteção contra reimportação.
+- Sugestões de categorias por descrição, regras gerenciáveis nas configurações e memória opcional das escolhas confirmadas na importação.
+- Alteração de senha com confirmação da senha atual e exclusão da conta com remoção dos registros, confirmação explícita e retomada em caso de interrupção.
 - Orçamentos mensais por categoria, progresso e alertas de 80% e 100%.
 - Metas, aportes, retiradas e histórico transacional.
 - Investimentos manuais com resultado nominal e histórico de atualizações.
@@ -113,6 +115,26 @@ Cada linha representa somente o valor lançado naquela fatura, inclusive quando 
 Valores negativos e zerados são exibidos, mas não são importados como compras. Eles podem representar pagamentos ou créditos; esta versão não aplica estornos automaticamente. No exemplo fornecido pelo usuário, as três linhas negativas eram **Pagamento recebido**. Não use a soma das compras como total líquido de uma fatura que contenha estornos sem conferir os créditos separadamente.
 
 Limites: CSV de até 2 MB e 500 linhas, com até 200 compras e 10 categorias em uma confirmação. Para arquivos maiores que uma seleção, envie novamente o mesmo CSV após a primeira importação e selecione as linhas restantes. A seleção é gravada atomicamente e uma fatura paga não aceita novas compras. OFX e PDF não estão incluídos nesta primeira versão.
+
+### Categorias sugeridas e compras semelhantes
+
+Em **Configurações > Categorias na importação**, salve uma descrição, a comparação por descrição inteira ou palavras contidas e uma categoria de despesa ativa. A comparação ignora acentos, caixa e pontuação; palavras contidas devem estar completas. Descrição inteira tem preferência, seguida pela regra mais específica. Empates com categorias diferentes ficam sem sugestão. Para atualizar uma regra, salve a mesma descrição/comparação com a nova categoria; excluir uma regra não altera compras existentes.
+
+Na prévia, as sugestões estão identificadas e podem ser alteradas. **Lembrar as categorias destas descrições** é opcional e começa desmarcado. Ao confirmar, as regras de descrição inteira são salvas na mesma transação das compras novas. Descrições com categorias conflitantes não são lembradas. Abrir a prévia, voltar ou cancelar não grava compras nem regras.
+
+Compras já registradas com o mesmo cartão, competência, data, valor e descrição normalizada começam desmarcadas e recebem um aviso; o usuário pode selecionar uma repetição legítima. Repetições no arquivo também são destacadas. O ID original continua garantindo que o mesmo lançamento importado não seja sobrescrito.
+
+## Conta e privacidade
+
+Em **Configurações**, a seção de segurança permite trocar a senha informando a atual, a nova (mínimo de oito caracteres e diferente da atual) e a confirmação. O SDK reautentica o usuário e atualiza o token antes da operação. Senhas não são gravadas no Firestore, no armazenamento local nem nos relatórios.
+
+A seção de privacidade descreve os dados no Firebase Authentication/Firestore, o processamento local do CSV, a exportação e o armazenamento de tema e retomada no navegador. Não representa uma auditoria de conformidade legal.
+
+Para excluir a conta, exporte seus dados antes, confirme a senha atual e digite **EXCLUIR**. O aplicativo marca o perfil em exclusão e bloqueia novas gravações pelas regras, inclusive em outras sessões. Exclui as onze subcoleções conhecidas em lotes de até 200 documentos, depois o perfil e, por último, o usuário no Authentication. Faturas pagas e históricos imutáveis só podem ser removidos nesse fluxo com login recente (menos de cinco minutos).
+
+A operação ocorre no navegador e requer conexão e a página aberta. Ela não é atômica entre Firestore e Authentication: em uma falha, parte dos dados pode já estar removida. A marca no perfil e uma marca local por UID permitem retomar; se a remoção do Authentication falhar após remover o perfil, o aplicativo tenta restaurar a marca no servidor. Uma nova tentativa confirma novamente a senha e continua sem recriar categorias quando houver marca de retomada. Para volumes grandes ou garantia de execução após fechar o navegador, será necessário um serviço de exclusão no servidor. Cópias JSON já baixadas permanecem sob controle do usuário.
+
+**Antes de publicar esta versão**, publique o novo `firestore.rules` conforme o checklist Firebase. Ele adiciona `importRules` e as permissões específicas de exclusão; apenas atualizar o site não atualiza as regras. Os testes de segurança exigem Java 21+ e usam apenas o projeto `demo-financeiro`.
 
 ## Regras financeiras
 
@@ -156,6 +178,7 @@ Todo dado fica sob `users/{uid}`. O perfil possui createdAt/version. Todos os do
 | investments | name, type, institution, invested, current, date, archived |
 | snapshots | investmentId, invested, current, date |
 | recurrences | description, kind, amount, accountId, categoryId, startDate, endDate, notes, archived |
+| importRules | pattern normalizado, match (exact/contains), categoryId, createdAt; ID hash da comparação e descrição |
 
 Tipos de entries: income, expense, transfer, purchase, invoicePayment. Transferências usam accountId/toAccountId; compras usam cardId/invoiceMonth/groupId/installment/installments. Pagamentos usam `invoice_{cardId}_{month}`; ocorrências, `rec_{ruleId}_{month}`.
 
@@ -179,7 +202,7 @@ Para verificar o aplicativo localmente, configure `.env.local` para o emulador: 
 - Até 12 parcelas por compra para respeitar limites das regras. Não há edição de compras; exclua/recrie antes de pagar faturas relacionadas.
 - Faturas com pagamento integral apenas, sem estorno, pagamento parcial, rotativo, juros ou antecipação.
 - Limite de cartão é informativo e não bloqueia registro de compras acima dele.
-- Sem fila offline, integração bancária, push, importação JSON, conta compartilhada ou exclusão completa de conta pela interface.
+- Sem fila offline, integração bancária, push, importação JSON ou conta compartilhada. A exclusão de conta exige a página aberta e pode precisar ser retomada após falhas.
 - Navegação protegida no cliente; autorização efetiva pelas regras, sem sessão de servidor por cookie.
 - Credenciais reais e implantação devem ser verificadas no seu Firebase. Testes locais não significam publicação em produção.
 

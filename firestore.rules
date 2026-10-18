@@ -2,6 +2,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function owner(uid) { return request.auth != null && request.auth.uid == uid; }
+    function deleting(uid) { return exists(/databases/$(database)/documents/users/$(uid)) && 'deletionStartedAt' in get(/databases/$(database)/documents/users/$(uid)).data; }
+    function writable(uid) { return owner(uid) && !deleting(uid); }
+    function recentLogin() { return request.auth != null && request.auth.token.auth_time is int && request.time.toMillis() / 1000 - request.auth.token.auth_time < 300; }
     function text(v, max) { return v is string && v.size() <= max; }
     function label(v) { return text(v, 120) && v.size() >= 2; }
     function money(v) { return v is int && v >= 0 && v <= 9000000000000; }
@@ -40,41 +43,62 @@ service cloud.firestore {
     }
     match /users/{uid} {
       allow read: if owner(uid);
-      allow create: if owner(uid) && request.resource.data.keys().hasOnly(['createdAt','version']) && created(request.resource.data) && request.resource.data.version == 1;
-      allow update, delete: if false;
+      allow create: if owner(uid) && created(request.resource.data) && request.resource.data.version == 1
+        && (request.resource.data.keys().hasOnly(['createdAt','version'])
+          || (recentLogin() && request.resource.data.keys().hasOnly(['createdAt','version','deletionStartedAt']) && text(request.resource.data.deletionStartedAt,40) && request.resource.data.deletionStartedAt.size() >= 20));
+      allow update: if owner(uid) && recentLogin() && stableCreated() && request.resource.data.version == resource.data.version
+        && request.resource.data.keys().hasOnly(['createdAt','version','deletionStartedAt'])
+        && text(request.resource.data.deletionStartedAt,40) && request.resource.data.deletionStartedAt.size() >= 20
+        && (!('deletionStartedAt' in resource.data) || request.resource.data.deletionStartedAt == resource.data.deletionStartedAt);
+      allow delete: if owner(uid) && recentLogin() && deleting(uid);
+      match /{collectionId}/{id} {
+        allow delete: if owner(uid) && recentLogin() && deleting(uid)
+          && collectionId in ['accounts','categories','entries','cards','budgets','goals','goalMovements','investments','snapshots','recurrences','importRules'];
+      }
+      match /importRules/{id} {
+        function valid(d) {
+          return d.keys().hasOnly(['pattern','match','categoryId','createdAt']) && created(d) && label(d.pattern)
+            && d.match in ['exact','contains'] && categoryMatches(uid,d.categoryId,'expense')
+            && get(/databases/$(database)/documents/users/$(uid)/categories/$(d.categoryId)).data.archived == false;
+        }
+        allow read: if owner(uid);
+        allow create: if writable(uid) && valid(request.resource.data);
+        allow update: if writable(uid) && valid(request.resource.data) && stableCreated();
+        allow delete: if writable(uid);
+      }
       match /accounts/{id} {
         function valid(d) { return d.keys().hasOnly(['name','type','initialBalance','color','archived','createdAt']) && label(d.name) && d.type in ['Conta corrente','Poupança','Dinheiro','Carteira digital','Investimentos'] && signedMoney(d.initialBalance) && color(d.color) && d.archived is bool && created(d); }
         allow read: if owner(uid);
-        allow create: if owner(uid) && valid(request.resource.data);
-        allow update: if owner(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.initialBalance == resource.data.initialBalance;
+        allow create: if writable(uid) && valid(request.resource.data);
+        allow update: if writable(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.initialBalance == resource.data.initialBalance;
         allow delete: if false;
       }
       match /categories/{id} {
         function valid(d) { return d.keys().hasOnly(['name','type','color','icon','archived','createdAt']) && label(d.name) && d.type in ['income','expense'] && color(d.color) && d.icon in ['tag','utensils','home','car','heart','book','sparkles','wallet'] && d.archived is bool && created(d); }
         allow read: if owner(uid);
-        allow create: if owner(uid) && valid(request.resource.data);
-        allow update: if owner(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.type == resource.data.type;
+        allow create: if writable(uid) && valid(request.resource.data);
+        allow update: if writable(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.type == resource.data.type;
         allow delete: if false;
       }
       match /cards/{id} {
         function valid(d) { return d.keys().hasOnly(['name','limit','closingDay','dueDay','color','archived','revision','createdAt']) && label(d.name) && money(d.limit) && d.limit > 0 && d.closingDay is int && d.closingDay >= 1 && d.closingDay <= 31 && d.dueDay is int && d.dueDay >= 1 && d.dueDay <= 31 && color(d.color) && d.archived is bool && d.revision is int && d.revision >= 1 && created(d); }
         allow read: if owner(uid);
-        allow create: if owner(uid) && valid(request.resource.data) && request.resource.data.revision == 1;
-        allow update: if owner(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.revision == resource.data.revision + 1;
+        allow create: if writable(uid) && valid(request.resource.data) && request.resource.data.revision == 1;
+        allow update: if writable(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.revision == resource.data.revision + 1;
         allow delete: if false;
       }
       match /entries/{id} {
         allow read: if owner(uid);
-        allow create: if owner(uid) && validEntry(uid,request.resource.data,id);
-        allow update: if owner(uid) && resource.data.kind in ['income','expense'] && request.resource.data.kind in ['income','expense'] && stableCreated() && request.resource.data.recurrenceId == resource.data.recurrenceId && validEntry(uid,request.resource.data,id);
-        allow delete: if owner(uid) && ((resource.data.kind in ['income','expense','transfer'] && resource.data.recurrenceId == '') || (resource.data.kind == 'purchase' && invoiceUnpaid(uid,resource.data) && cardBumped(uid,resource.data.cardId)));
+        allow create: if writable(uid) && validEntry(uid,request.resource.data,id);
+        allow update: if writable(uid) && resource.data.kind in ['income','expense'] && request.resource.data.kind in ['income','expense'] && stableCreated() && request.resource.data.recurrenceId == resource.data.recurrenceId && validEntry(uid,request.resource.data,id);
+        allow delete: if writable(uid) && ((resource.data.kind in ['income','expense','transfer'] && resource.data.recurrenceId == '') || (resource.data.kind == 'purchase' && invoiceUnpaid(uid,resource.data) && cardBumped(uid,resource.data.cardId)));
       }
       match /budgets/{id} {
         function valid(d) { return d.keys().hasOnly(['categoryId','month','amount','createdAt']) && created(d) && month(d.month) && categoryMatches(uid,d.categoryId,'expense') && money(d.amount) && d.amount > 0 && id == d.categoryId + '_' + d.month; }
         allow read: if owner(uid);
-        allow create: if owner(uid) && valid(request.resource.data);
-        allow update: if owner(uid) && valid(request.resource.data) && stableCreated();
-        allow delete: if owner(uid);
+        allow create: if writable(uid) && valid(request.resource.data);
+        allow update: if writable(uid) && valid(request.resource.data) && stableCreated();
+        allow delete: if writable(uid);
       }
       match /goals/{id} {
         function valid(d) { return d.keys().hasOnly(['name','target','current','deadline','archived','lastMovementId','createdAt']) && created(d) && label(d.name) && money(d.target) && d.target > 0 && money(d.current) && optionalDay(d.deadline) && d.archived is bool && text(d.lastMovementId,120); }
@@ -85,14 +109,14 @@ service cloud.firestore {
             && movement.data.goalId == id && request.resource.data.current == resource.data.current + movement.data.amount;
         }
         allow read: if owner(uid);
-        allow create: if owner(uid) && valid(request.resource.data) && request.resource.data.current == 0 && request.resource.data.lastMovementId == '';
-        allow update: if owner(uid) && valid(request.resource.data) && stableCreated()
+        allow create: if writable(uid) && valid(request.resource.data) && request.resource.data.current == 0 && request.resource.data.lastMovementId == '';
+        allow update: if writable(uid) && valid(request.resource.data) && stableCreated()
           && ((request.resource.data.current == resource.data.current && request.resource.data.lastMovementId == resource.data.lastMovementId) || validMovement());
         allow delete: if false;
       }
       match /goalMovements/{id} {
         allow read: if owner(uid);
-        allow create: if owner(uid) && request.resource.data.keys().hasOnly(['goalId','amount','date','notes','createdAt']) && created(request.resource.data) && signedMoney(request.resource.data.amount) && request.resource.data.amount != 0 && day(request.resource.data.date) && text(request.resource.data.notes,1000)
+        allow create: if writable(uid) && request.resource.data.keys().hasOnly(['goalId','amount','date','notes','createdAt']) && created(request.resource.data) && signedMoney(request.resource.data.amount) && request.resource.data.amount != 0 && day(request.resource.data.date) && text(request.resource.data.notes,1000)
           && getAfter(/databases/$(database)/documents/users/$(uid)/goals/$(request.resource.data.goalId)).data.current == get(/databases/$(database)/documents/users/$(uid)/goals/$(request.resource.data.goalId)).data.current + request.resource.data.amount
           && getAfter(/databases/$(database)/documents/users/$(uid)/goals/$(request.resource.data.goalId)).data.lastMovementId == id;
         allow update,delete: if false;
@@ -100,13 +124,13 @@ service cloud.firestore {
       match /investments/{id} {
         function valid(d) { return d.keys().hasOnly(['name','type','institution','invested','current','date','archived','createdAt']) && label(d.name) && label(d.institution) && d.type in ['CDB','Tesouro Direto','LCI','LCA','Ações','Fundos','Outros'] && money(d.invested) && money(d.current) && day(d.date) && d.archived is bool && created(d); }
         allow read: if owner(uid);
-        allow create: if owner(uid) && valid(request.resource.data);
-        allow update: if owner(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.date >= resource.data.date;
+        allow create: if writable(uid) && valid(request.resource.data);
+        allow update: if writable(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.date >= resource.data.date;
         allow delete: if false;
       }
       match /snapshots/{id} {
         allow read: if owner(uid);
-        allow create: if owner(uid) && request.resource.data.keys().hasOnly(['investmentId','invested','current','date','createdAt']) && created(request.resource.data) && money(request.resource.data.invested) && money(request.resource.data.current) && day(request.resource.data.date)
+        allow create: if writable(uid) && request.resource.data.keys().hasOnly(['investmentId','invested','current','date','createdAt']) && created(request.resource.data) && money(request.resource.data.invested) && money(request.resource.data.current) && day(request.resource.data.date)
           && getAfter(/databases/$(database)/documents/users/$(uid)/investments/$(request.resource.data.investmentId)).data.current == request.resource.data.current
           && getAfter(/databases/$(database)/documents/users/$(uid)/investments/$(request.resource.data.investmentId)).data.invested == request.resource.data.invested;
         allow update,delete: if false;
@@ -114,8 +138,8 @@ service cloud.firestore {
       match /recurrences/{id} {
         function valid(d) { return d.keys().hasOnly(['description','amount','kind','accountId','categoryId','startDate','endDate','notes','archived','createdAt']) && label(d.description) && money(d.amount) && d.amount > 0 && d.kind in ['income','expense'] && accountExists(uid,d.accountId) && categoryMatches(uid,d.categoryId,d.kind) && day(d.startDate) && optionalDay(d.endDate) && (d.endDate == '' || d.endDate >= d.startDate) && text(d.notes,1000) && d.archived is bool && created(d); }
         allow read: if owner(uid);
-        allow create: if owner(uid) && valid(request.resource.data);
-        allow update: if owner(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived']);
+        allow create: if writable(uid) && valid(request.resource.data);
+        allow update: if writable(uid) && valid(request.resource.data) && stableCreated() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived']);
         allow delete: if false;
       }
     }

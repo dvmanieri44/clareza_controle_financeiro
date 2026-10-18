@@ -38,4 +38,74 @@ describe("isolamento e validação no Firestore", () => {
     await assertFails(setDoc(target, { ...purchase, amount: 1 }));
   });
   it("nega coleções desconhecidas", async () => { const db=env.authenticatedContext("alice").firestore(); await assertFails(setDoc(doc(db,"users/alice/admin/config"),{enabled:true})); });
+  it("isola e valida regras de importação por usuário e categoria", async () => {
+    const db = env.authenticatedContext("alice").firestore();
+    const other = env.authenticatedContext("bob").firestore();
+    const target = doc(db, "users/alice/importRules/rule");
+    const rule = { pattern: "mercado", match: "contains", categoryId: "c", createdAt };
+    await assertSucceeds(setDoc(target, rule));
+    await assertFails(getDoc(doc(other, "users/alice/importRules/rule")));
+    await assertFails(setDoc(doc(other, "users/alice/importRules/other"), rule));
+    for (const patch of [{ pattern: "" }, { match: "regex" }, { categoryId: "missing" }, { extra: true }]) await assertFails(setDoc(doc(db, "users/alice/importRules/invalid"), { ...rule, ...patch }));
+    await assertFails(updateDoc(target, { createdAt: "2026-11-01T00:00:00.000Z" }));
+    await assertSucceeds(deleteDoc(target));
+    await updateDoc(doc(db, "users/alice/categories/c"), { archived: true });
+    await assertFails(setDoc(target, rule));
+  });
+  it("exige login recente e marca explícita antes de excluir o histórico", async () => {
+    const db = env.authenticatedContext("alice", { auth_time: Math.floor(Date.now() / 1000) }).firestore();
+    const stale = env.authenticatedContext("alice", { auth_time: Math.floor(Date.now() / 1000) - 3600 }).firestore();
+    const profile = doc(db, "users/alice");
+    await assertSucceeds(setDoc(profile, { createdAt, version: 1 }));
+    await assertFails(deleteDoc(profile));
+    await assertFails(updateDoc(doc(stale, "users/alice"), { deletionStartedAt: createdAt }));
+    await assertSucceeds(updateDoc(profile, { deletionStartedAt: createdAt }));
+    await assertFails(deleteDoc(doc(stale, "users/alice/accounts/a")));
+    const other = env.authenticatedContext("bob", { auth_time: Math.floor(Date.now() / 1000) }).firestore();
+    await assertFails(deleteDoc(doc(other, "users/alice/accounts/a")));
+    await assertSucceeds(deleteDoc(doc(db, "users/alice/accounts/a")));
+    await assertSucceeds(deleteDoc(profile));
+  });
+  it("bloqueia novas gravações e a remoção da marca durante a exclusão", async () => {
+    const db = env.authenticatedContext("alice", { auth_time: Math.floor(Date.now() / 1000) }).firestore();
+    const profile = doc(db, "users/alice");
+    await setDoc(profile, { createdAt, version: 1 });
+    await updateDoc(profile, { deletionStartedAt: createdAt });
+    await assertFails(setDoc(profile, { createdAt, version: 1 }));
+    await assertFails(setDoc(doc(db, "users/alice/accounts/new"), account));
+    await assertFails(updateDoc(doc(db, "users/alice/categories/c"), { archived: true }));
+    await assertFails(setDoc(doc(db, "users/alice/entries/new"), entry));
+    await assertFails(setDoc(doc(db, "users/alice/importRules/new"), { pattern: "loja", match: "exact", categoryId: "c", createdAt }));
+    await assertSucceeds(getDoc(doc(db, "users/alice/accounts/a")));
+    await assertFails(setDoc(doc(db, "users/alice/unknown/new"), { createdAt }));
+    await env.withSecurityRulesDisabled(async ctx => { await setDoc(doc(ctx.firestore(), "users/alice/unknown/new"), { createdAt }); });
+    await assertFails(deleteDoc(doc(db, "users/alice/unknown/new")));
+  });
+  it("permite apagar em lote faturas pagas, mestres e históricos na exclusão de conta", async () => {
+    const db = env.authenticatedContext("alice", { auth_time: Math.floor(Date.now() / 1000) }).firestore();
+    await env.withSecurityRulesDisabled(async ctx => {
+      await setDoc(doc(ctx.firestore(), "users/alice/entries/invoice_card_2026-11"), { ...entry, kind: "invoicePayment", cardId: "card", invoiceMonth: "2026-11" });
+      await setDoc(doc(ctx.firestore(), "users/alice/goalMovements/m"), { goalId: "g", amount: 100, date: "2026-10-18", notes: "", createdAt });
+      await setDoc(doc(ctx.firestore(), "users/alice/snapshots/s"), { investmentId: "i", invested: 100, current: 100, date: "2026-10-18", createdAt });
+    });
+    await setDoc(doc(db, "users/alice"), { createdAt, version: 1 });
+    await updateDoc(doc(db, "users/alice"), { deletionStartedAt: createdAt });
+    const batch = writeBatch(db);
+    for (const path of ["accounts/a", "categories/c", "cards/card", "entries/invoice_card_2026-11", "goalMovements/m", "snapshots/s"]) batch.delete(doc(db, `users/alice/${path}`));
+    await assertSucceeds(batch.commit());
+  });
+  it("permite confirmar 200 compras e 200 regras em até dez categorias no mesmo lote", async () => {
+    await env.withSecurityRulesDisabled(async ctx => {
+      for (let index = 0; index < 10; index++) await setDoc(doc(ctx.firestore(), `users/alice/categories/c${index}`), category);
+    });
+    const db = env.authenticatedContext("alice").firestore();
+    const batch = writeBatch(db);
+    for (let index = 0; index < 200; index++) {
+      const categoryId = `c${index % 10}`;
+      batch.set(doc(db, `users/alice/entries/import_${index}`), { ...entry, kind: "purchase", accountId: "", cardId: "card", categoryId, status: "pending", invoiceMonth: "2026-11", dueDate: "2026-11-15", groupId: `g${index}`, installment: 1, installments: 1 });
+      batch.set(doc(db, `users/alice/importRules/rule_${index}`), { pattern: `loja ${index}`, match: "exact", categoryId, createdAt });
+    }
+    batch.update(doc(db, "users/alice/cards/card"), { revision: 2 });
+    await assertSucceeds(batch.commit());
+  }, 30000);
 });
