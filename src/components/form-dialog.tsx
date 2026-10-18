@@ -1,31 +1,49 @@
 "use client";
-import { useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { useEffect, useId, useMemo, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { errorMessage } from "@/lib/firebase/repository";
-import { date as dateSchema, month as monthSchema } from "@/lib/domain/schemas";
-import { parseMoney } from "@/lib/domain/finance";
-export interface FormField { key: string; label: string; type?: "text" | "date" | "month" | "money" | "signedMoney" | "number" | "color" | "textarea" | "select"; options?: { value: string; label: string }[]; required?: boolean; min?: number; max?: number; disabled?: boolean; help?: string; }
+import { createFormSchema, type FormField } from "@/lib/domain/form";
+import { InfoButton } from "./info-button";
+export type { FormField } from "@/lib/domain/form";
 export interface FormConfig { title: string; description?: string; fields: FormField[]; defaults?: Record<string, string>; submitLabel?: string; submit: (values: Record<string, string>) => Promise<void>; }
 export function FormDialog({ config, close }: { config: FormConfig; close: () => void }) {
-  const schema = useMemo(() => z.record(z.string(), z.string()).superRefine((values, ctx) => {
-    for (const field of config.fields) {
-      const value = values[field.key] || ""; const add = (message: string) => ctx.addIssue({ code: "custom", path: [field.key], message });
-      if (!value.trim()) { if (field.required !== false) add("Preencha este campo."); continue; }
-      if (field.type === "money" || field.type === "signedMoney") { try { const cents = parseMoney(value); if (field.type === "money" && cents <= 0) add("Informe um valor maior que zero."); } catch (err) { add((err as Error).message); } }
-      else if (field.type === "date" && !dateSchema.safeParse(value).success) add("Informe uma data válida (1900 a 2199).");
-      else if (field.type === "month" && !monthSchema.safeParse(value).success) add("Informe um mês válido.");
-      else if (field.type === "number" && (!Number.isInteger(Number(value)) || Number(value) < (field.min ?? 0) || Number(value) > (field.max ?? 1000000))) add(`Informe um inteiro entre ${field.min ?? 0} e ${field.max ?? 1000000}.`);
-      else if (field.type === "select" && !field.options?.some(o => o.value === value)) add("Selecione uma opção disponível.");
-      if (value.length > (field.type === "textarea" ? 1000 : 120)) add("Texto muito longo.");
-    }
-  }), [config.fields]);
+  const prefix = useId();
+  const [problem, setProblem] = useState("");
+  const schema = useMemo(() => createFormSchema(config.fields), [config.fields]);
   const defaults = Object.fromEntries(config.fields.map(f => [f.key, config.defaults?.[f.key] ?? (f.type === "color" ? "#10b981" : "")]));
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<Record<string, string>>({ resolver: zodResolver(schema), defaultValues: defaults });
-  return <Dialog open onOpenChange={open => { if (!open && !isSubmitting) close(); }} title={config.title} description={config.description}><form className="grid gap-4" noValidate onSubmit={handleSubmit(async values => { try { await config.submit(values); toast.success("Pronto! Alteração salva."); close(); } catch (error) { toast.error(errorMessage(error)); } })}>{config.fields.map(field => <label key={field.key} className="field-label" htmlFor={`field-${field.key}`}>{field.label}{field.required === false && <span className="ml-1 font-normal text-muted-foreground">(opcional)</span>}{field.type === "select" ? <select className="input" id={`field-${field.key}`} {...register(field.key)} disabled={field.disabled}><option value="">Selecione…</option>{field.options?.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select> : field.type === "textarea" ? <textarea className="input min-h-20" id={`field-${field.key}`} {...register(field.key)} maxLength={1000} /> : <input className="input" id={`field-${field.key}`} {...register(field.key)} type={field.type === "money" || field.type === "signedMoney" ? "text" : field.type || "text"} inputMode={field.type === "money" || field.type === "signedMoney" ? "decimal" : undefined} placeholder={field.type === "money" || field.type === "signedMoney" ? "0,00" : undefined} min={field.min} max={field.max} disabled={field.disabled} maxLength={120} />}{field.help && <span className="text-xs font-normal text-muted-foreground">{field.help}</span>}{errors[field.key] && <span role="alert" className="field-error">{String(errors[field.key]?.message)}</span>}</label>)}<div className="mt-3 flex justify-end gap-2"><Button type="button" variant="outline" disabled={isSubmitting} onClick={close}>Cancelar</Button><Button disabled={isSubmitting}>{isSubmitting && <Loader2 className="animate-spin" />}{config.submitLabel || "Salvar"}</Button></div></form></Dialog>;
+  const { register, handleSubmit, control, setValue, formState: { errors, isSubmitting } } = useForm<Record<string, string>>({ resolver: zodResolver(schema), defaultValues: defaults });
+  const values = useWatch({ control });
+  useEffect(() => {
+    for (const field of config.fields) {
+      const option = field.options?.find(option => option.value === values[field.key]);
+      if (option?.when && values[option.when.field] !== option.when.value) setValue(field.key, "");
+    }
+  }, [config.fields, values, setValue]);
+  return <Dialog open busy={isSubmitting} onOpenChange={open => { if (!open && !isSubmitting) close(); }} title={config.title} description={config.description}>
+    <form className="grid gap-4" noValidate aria-busy={isSubmitting} onSubmit={handleSubmit(async values => {
+      setProblem("");
+      try { await config.submit(values); toast.success("Pronto! Alteração salva."); close(); }
+      catch (error) { setProblem(errorMessage(error)); }
+    })}>
+      {config.fields.map(field => {
+        const id = `${prefix}-${field.key}`;
+        const describedBy = errors[field.key] ? `${id}-error` : undefined;
+        const attributes = { id, "aria-invalid": !!errors[field.key], "aria-describedby": describedBy, "aria-required": field.required !== false, disabled: field.disabled || isSubmitting };
+        return <div key={field.key}>
+          <div className="field-heading"><label className="field-label" htmlFor={id}>{field.label}{field.required === false && <span className="ml-1 font-normal text-muted-foreground">(opcional)</span>}</label>{field.help && <InfoButton title={field.label} text={field.help} />}</div>
+          {field.type === "select" ? <select className="input mt-2" {...register(field.key)} {...attributes}><option value="">Selecione…</option>{field.options?.filter(option => !option.when || values[option.when.field] === option.when.value).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+            : field.type === "textarea" ? <textarea className="input mt-2 min-h-24" {...register(field.key)} {...attributes} maxLength={1000} />
+              : <input className="input mt-2" {...register(field.key)} {...attributes} type={field.type === "money" || field.type === "signedMoney" ? "text" : field.type || "text"} inputMode={field.type === "money" || field.type === "signedMoney" ? "decimal" : undefined} placeholder={field.type === "money" || field.type === "signedMoney" ? "0,00" : undefined} min={field.min} max={field.max} maxLength={120} />}
+          {errors[field.key] && <span id={`${id}-error`} role="alert" className="field-error">{String(errors[field.key]?.message)}</span>}
+        </div>;
+      })}
+      {problem && <p role="alert" className="error-box">{problem}</p>}
+      <div className="form-actions"><Button type="button" variant="outline" disabled={isSubmitting} onClick={close}>Cancelar</Button><Button disabled={isSubmitting}>{isSubmitting && <Loader2 aria-hidden="true" className="animate-spin" />}{isSubmitting ? "Salvando…" : config.submitLabel || "Salvar"}</Button></div>
+    </form>
+  </Dialog>;
 }

@@ -18,5 +18,24 @@ describe("isolamento e validação no Firestore", () => {
   it("exige atualização atômica do cartão para compras", async () => { const db=env.authenticatedContext("alice").firestore(); const purchase={...entry,kind:"purchase",accountId:"",cardId:"card",status:"pending",invoiceMonth:"2026-11",dueDate:"2026-11-15",groupId:"g",installment:1,installments:1}; const target=doc(db,"users/alice/entries/p"); await assertFails(setDoc(target,purchase)); const batch=writeBatch(db); batch.set(target,purchase); batch.update(doc(db,"users/alice/cards/card"),{revision:2}); await assertSucceeds(batch.commit()); await assertFails(updateDoc(target,{amount:999})); });
   it("bloqueia compras em fatura paga e pagamento duplicado", async () => { const db=env.authenticatedContext("alice").firestore(); const pay={...entry,kind:"invoicePayment",categoryId:"",cardId:"card",invoiceMonth:"2026-11"}; const payment=doc(db,"users/alice/entries/invoice_card_2026-11"); const batch=writeBatch(db); batch.set(payment,pay); batch.update(doc(db,"users/alice/cards/card"),{revision:2}); await assertSucceeds(batch.commit()); await assertFails(setDoc(payment,pay)); const second=writeBatch(db); second.set(doc(db,"users/alice/entries/p"),{...entry,kind:"purchase",accountId:"",cardId:"card",status:"pending",invoiceMonth:"2026-11",dueDate:"2026-11-15",groupId:"g",installment:1,installments:1}); second.update(doc(db,"users/alice/cards/card"),{revision:3}); await assertFails(second.commit()); });
   it("exige saldo coerente ao registrar aporte", async () => { const db=env.authenticatedContext("alice").firestore(); const goal=doc(db,"users/alice/goals/g"); await assertSucceeds(setDoc(goal,{name:"Viagem",target:10000,current:0,lastMovementId:"",deadline:"",archived:false,createdAt})); const movement=doc(db,"users/alice/goalMovements/m"); const data={goalId:"g",amount:500,date:"2026-10-16",notes:"",createdAt}; await assertFails(setDoc(movement,data)); const batch=writeBatch(db); batch.update(goal,{current:500,lastMovementId:"m"}); batch.set(movement,data); await assertSucceeds(batch.commit()); await assertFails(updateDoc(goal,{current:-1})); });
+  it("permite importar 200 compras na mesma revisão sem gerar parcelas futuras", async () => {
+    const db = env.authenticatedContext("alice").firestore();
+    const batch = writeBatch(db);
+    for (let index = 0; index < 200; index++) {
+      const id = `nu_${index.toString(16).padStart(64, "0")}`;
+      batch.set(doc(db, `users/alice/entries/${id}_1`), { ...entry, kind: "purchase", accountId: "", cardId: "card", status: "pending", invoiceMonth: "2026-11", dueDate: "2026-11-15", groupId: id, installment: 1, installments: 1 });
+    }
+    batch.update(doc(db, "users/alice/cards/card"), { revision: 2 });
+    await assertSucceeds(batch.commit());
+  }, 30000);
+  it("não permite sobrescrever uma compra já importada", async () => {
+    const db = env.authenticatedContext("alice").firestore();
+    const id = `nu_${"a".repeat(64)}`;
+    const target = doc(db, `users/alice/entries/${id}_1`);
+    const purchase = { ...entry, kind: "purchase", accountId: "", cardId: "card", status: "pending", invoiceMonth: "2026-11", dueDate: "2026-11-15", groupId: id, installment: 1, installments: 1 };
+    const batch = writeBatch(db); batch.set(target, purchase); batch.update(doc(db, "users/alice/cards/card"), { revision: 2 });
+    await assertSucceeds(batch.commit());
+    await assertFails(setDoc(target, { ...purchase, amount: 1 }));
+  });
   it("nega coleções desconhecidas", async () => { const db=env.authenticatedContext("alice").firestore(); await assertFails(setDoc(doc(db,"users/alice/admin/config"),{enabled:true})); });
 });

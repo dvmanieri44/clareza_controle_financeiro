@@ -1,0 +1,82 @@
+name: Publicar no GitHub Pages
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: read
+    env:
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
+      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+      NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ vars.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
+      NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+      NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID }}
+      NEXT_PUBLIC_USE_FIREBASE_EMULATORS: "false"
+    steps:
+      - name: Baixar o projeto
+        uses: actions/checkout@v6
+      - name: Preparar Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Consultar o caminho do site
+        id: pages
+        uses: actions/configure-pages@v5
+      - name: Validar a configuração do Firebase
+        run: |
+          node --input-type=module <<'NODE'
+          const required = [
+            "NEXT_PUBLIC_FIREBASE_API_KEY",
+            "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
+            "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
+            "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
+            "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
+            "NEXT_PUBLIC_FIREBASE_APP_ID",
+          ];
+          const missing = required.filter(name => !process.env[name]?.trim());
+          if (missing.length) {
+            console.error(`Configure as variáveis do repositório em Settings > Secrets and variables > Actions > Variables: ${missing.join(", ")}`);
+            process.exit(1);
+          }
+          NODE
+      - name: Instalar as dependências
+        run: npm ci
+      - name: Exportar o aplicativo aprovado pelo CI
+        run: npm run build && npm run verify:pages
+        env:
+          GITHUB_PAGES: "true"
+          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+      - name: Preparar os arquivos do site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: out
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar o site
+        id: deployment
+        uses: actions/deploy-pages@v4

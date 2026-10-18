@@ -7,10 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --exclude tests/firestore.test.ts",
+    "test:coverage": "node scripts/coverage.mjs",
     "test:rules": "firebase emulators:exec --only firestore --project demo-financeiro \"vitest run tests/firestore.test.ts\"",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "verify:pages": "node scripts/verify-static-export.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "latest",

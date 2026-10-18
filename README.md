@@ -21,12 +21,23 @@ Abra http://localhost:3000. Sem credenciais, o app exibe instruções. Reinicie 
 npm run lint
 npm run typecheck
 npm test
+npm run test:coverage
 npm run build
 npm start
 npm run test:rules
 ```
 
 `npm run check` reúne lint, tipos, testes unitários e build.
+
+## Testes e integração contínua
+
+- Os testes unitários cobrem dinheiro, datas, schemas, formulários, contraste de cores, leitura do CSV e a transação de importação com banco isolado por mocks.
+- `npm run test:coverage` prepara o provedor V8 na mesma versão do Vitest instalado pelo lockfile. Essa ferramenta opcional requer acesso ao npm na primeira execução; `--no-save` mantém `package.json` e `package-lock.json`. O relatório fica em `coverage/index.html`.
+- A cobertura exigida é de 85% em linhas, instruções e funções e 80% em desvios, somente nos módulos puros de regras financeiras, validação, importação e contraste. Não representa cobertura da interface nem do Firebase real.
+- `.github/workflows/ci.yml` executa lint, tipagem, testes/cobertura em `UTC` e `America/Sao_Paulo`, as regras no emulador Firestore com Java 21 e builds Node.js e Pages. Os relatórios JUnit e de cobertura ficam nos artefatos da execução por 14 dias.
+- O check **CI aprovado** só passa se todas essas verificações passarem. Em `main`, a publicação no Pages ocorre depois desse check. Pull requests não publicam o site.
+
+As validações não usam credenciais de produção. Os testes das regras usam exclusivamente o projeto local `demo-financeiro`. A importação real no navegador só grava depois da confirmação do usuário.
 
 O `.env.local` fica somente na sua máquina e não é versionado. Em outro computador ou na hospedagem, preencha as seis variáveis conforme `.env.example`.
 
@@ -47,7 +58,32 @@ O `.env.local` fica somente na sua máquina e não é versionado. Em outro compu
 6. Reinicie, crie sua conta e cadastre uma conta financeira. O primeiro login cria somente categorias padrão e o perfil, sem valores fictícios.
 7. Registre receita/despesa, recarregue e confirme a persistência. Confira o e-mail de recuperação de senha.
 
-Não depende de Functions, Storage, integração bancária ou APIs de cotação. Confira as cotas do seu Firebase. Hospedagem não é provisionada: execute localmente ou em host Next.js/Node.
+Não depende de Functions, Storage, integração bancária ou APIs de cotação. Confira as cotas do seu Firebase. Execute localmente, em host Next.js/Node ou use o fluxo abaixo para o GitHub Pages.
+
+## Publicação no GitHub Pages
+
+O Pages precisa receber o aplicativo compilado. Publicar a raiz do código por uma branch pode exibir o README em vez do site. Após a aprovação do CI, o workflow reutilizável `.github/workflows/pages.yml` exporta HTML/CSS/JavaScript para `out`, verifica as rotas e assets e publica essa pasta.
+
+1. Em **Settings > Pages > Build and deployment > Source**, selecione **GitHub Actions**.
+2. Em **Settings > Secrets and variables > Actions > Variables**, crie as seis variáveis `NEXT_PUBLIC_FIREBASE_*` listadas em `.env.example`, com os valores do seu app Web Firebase. Elas são configurações públicas do cliente; não use chaves privadas ou uma conta de serviço. O arquivo `.env.local` continua fora do Git e não é enviado ao workflow.
+3. No Firebase Authentication, inclua `dvmanieri44.github.io` em **Settings > Authorized domains** e confira o checklist Firebase acima.
+4. Envie as alterações para `main`. Para executar manualmente, use **Actions > CI > Run workflow**, selecionando `main`. As verificações serão executadas antes de publicar.
+5. Após a execução concluir, abra https://dvmanieri44.github.io/clareza_controle_financeiro/ e teste login e persistência.
+
+O deploy é interrompido se faltar alguma variável ou se lint, tipagem, testes ou build falharem. O caminho do repositório é obtido do Pages durante o build, inclusive se um domínio próprio for configurado.
+
+Para gerar a mesma exportação localmente no PowerShell:
+
+```powershell
+$env:GITHUB_PAGES = "true"
+$env:PAGES_BASE_PATH = "/clareza_controle_financeiro"
+npm run check
+npm run verify:pages
+Remove-Item Env:GITHUB_PAGES
+Remove-Item Env:PAGES_BASE_PATH
+```
+
+Os arquivos gerados ficam em `out`. Para desenvolvimento ou hospedagem Node.js, use os comandos normais sem `GITHUB_PAGES=true`. O Pages hospeda a interface estática; autenticação e dados continuam no Firebase.
 
 ## Funcionalidades implementadas
 
@@ -56,12 +92,27 @@ Não depende de Functions, Storage, integração bancária ou APIs de cotação.
 - CRUD de transações, confirmação de pendências, notas, vencimentos, busca, ordenação e filtros por mês, intervalo, tipo, categoria e conta.
 - Contas com tipo/cor/saldo inicial e transferências atômicas sem gerar receita ou despesa.
 - Cartões, compras em até **12 parcelas**, faturas por competência, pagamento integral sem duplicar despesas e exclusão de compras cujas faturas ainda não foram pagas.
+- Importação local de fatura Nubank em CSV, com prévia editável, seleção de categorias e compras, confirmação e proteção contra reimportação.
 - Orçamentos mensais por categoria, progresso e alertas de 80% e 100%.
 - Metas, aportes, retiradas e histórico transacional.
 - Investimentos manuais com resultado nominal e histórico de atualizações.
 - Categorias com ícones/cores; arquivamento e restauração de registros mestres para preservar referências.
 - Recorrências mensais com início/fim, pausa e geração explícita sem duplicação.
 - Tema claro/escuro, layout responsivo, estados vazios, erros e exportação JSON.
+- Fontes em unidades relativas, contraste revisado nos temas claro/escuro, menu móvel com foco contido, navegação por teclado, atalhos para pular ao conteúdo, erros associados aos campos e alternativas em tabela para os gráficos.
+- Fluxo inicial simplificado, filtros avançados recolhidos e explicações detalhadas em botões de informação.
+
+## Importar fatura Nubank
+
+Em **Cartões > Importar fatura**, escolha o cartão e o mês de vencimento, selecione ou arraste o CSV e clique em **Conferir lançamentos**. O leitor aceita o formato `date,title,amount`, valores como `"11,95"` ou `11.95` e também arquivos com cabeçalhos Data/Descrição/Valor e separação por ponto e vírgula.
+
+Na prévia, confira datas, descrições e valores, selecione as compras e aplique uma categoria de despesa. A categoria também pode ser alterada por linha. Somente **Confirmar compras** inicia a gravação no Firestore; cancelar a prévia não altera seus registros. O arquivo original é processado no navegador e não é enviado ao banco.
+
+Cada linha representa somente o valor lançado naquela fatura, inclusive quando a descrição contém uma parcela: a importação não multiplica o valor nem gera parcelas futuras. O mês é escolhido explicitamente porque o CSV não informa a competência em uma coluna própria. Compras iguais no mesmo arquivo são preservadas e destacadas para conferência. Reenviar as mesmas linhas para o mesmo cartão e competência mantém identificadores estáveis e não cria duplicatas; compras semelhantes já cadastradas manualmente ficam desmarcadas inicialmente.
+
+Valores negativos e zerados são exibidos, mas não são importados como compras. Eles podem representar pagamentos ou créditos; esta versão não aplica estornos automaticamente. No exemplo fornecido pelo usuário, as três linhas negativas eram **Pagamento recebido**. Não use a soma das compras como total líquido de uma fatura que contenha estornos sem conferir os créditos separadamente.
+
+Limites: CSV de até 2 MB e 500 linhas, com até 200 compras e 10 categorias em uma confirmação. Para arquivos maiores que uma seleção, envie novamente o mesmo CSV após a primeira importação e selecione as linhas restantes. A seleção é gravada atomicamente e uma fatura paga não aceita novas compras. OFX e PDF não estão incluídos nesta primeira versão.
 
 ## Regras financeiras
 

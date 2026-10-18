@@ -4,13 +4,13 @@ import type { Account, Budget, Card, Entry, Recurrence } from "./types";
 export const MAX_MONEY = 9_000_000_000_000;
 export function money(value: number) { return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value / 100); }
 export function parseMoney(input: string): number {
-  const clean = input.trim().replace(/R\$\s?/, "").replace(/\s/g, "");
+  const clean = input.trim().replace(/^R\$\s?/, "").replace(/\s/g, "");
   if (!/^-?(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d{1,2})?$/.test(clean)) throw new Error("Informe um valor como 1.234,56.");
   const [whole, fraction = ""] = clean.replace(/\./g, "").split(",");
   const sign = whole.startsWith("-") ? -1 : 1;
   const cents = sign * (Number(whole.replace("-", "")) * 100 + Number(fraction.padEnd(2, "0")));
   if (!Number.isSafeInteger(cents) || Math.abs(cents) > MAX_MONEY) throw new Error("Valor fora do limite permitido.");
-  return cents;
+  return cents === 0 ? 0 : cents;
 }
 export function moneyInput(value: number) { return (value / 100).toFixed(2).replace(".", ","); }
 export function today() { return format(new Date(), "yyyy-MM-dd"); }

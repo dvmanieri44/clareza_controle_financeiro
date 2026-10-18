@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  quality:
+    name: Lint e TypeScript
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+
+  unit:
+    name: Testes e cobertura (${{ matrix.timezone }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        timezone: [UTC, America/Sao_Paulo]
+    env:
+      TZ: ${{ matrix.timezone }}
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run test:coverage
+      - name: Guardar relatórios de testes e cobertura
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-${{ strategy.job-index }}
+          path: |
+            coverage/
+            reports/
+          retention-days: 14
+          if-no-files-found: warn
+
+  rules:
+    name: Regras do Firestore
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CI: "true"
+      TEST_REPORT_FILE: reports/firestore.xml
+      FIREBASE_CLI_DISABLE_UPDATE_CHECK: "true"
+      GCLOUD_PROJECT: demo-financeiro
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firestore-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npm run test:rules
+      - name: Guardar relatório das regras
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: firestore-rules
+          path: |
+            reports/
+            firestore-debug.log
+          retention-days: 14
+          if-no-files-found: warn
+
+  build:
+    name: Build (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [node, pages]
+    env:
+      GITHUB_PAGES: ${{ matrix.mode == 'pages' && 'true' || 'false' }}
+      PAGES_BASE_PATH: /clareza_controle_financeiro
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - if: matrix.mode == 'pages'
+        run: npm run verify:pages
+
+  approved:
+    name: CI aprovado
+    if: always()
+    needs: [quality, unit, rules, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CHECKS: ${{ toJSON(needs) }}
+    steps:
+      - name: Exigir aprovação de todas as verificações
+        run: |
+          node --input-type=module <<'NODE'
+          const checks = JSON.parse(process.env.CHECKS);
+          const failed = Object.entries(checks).filter(([, job]) => job.result !== "success");
+          if (failed.length) {
+            console.error("Verificações sem aprovação:", failed.map(([name]) => name).join(", "));
+            process.exit(1);
+          }
+          console.log("Todas as verificações passaram.");
+          NODE
+
+  publish:
+    name: Publicar no Pages
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: approved
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml

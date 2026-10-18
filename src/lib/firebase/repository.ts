@@ -4,6 +4,7 @@ import type { Account, Card, CollectionMap, CollectionName, Entry, Goal, Investm
 import { firstInvoiceMonth, goalAfterMovement, invoiceTotal, monthDate, paymentId, recurrenceOccurrences, shiftMonth, splitInstallments, today } from "../domain/finance";
 import { accountSchema, cardSchema, cents, date, entrySchema, name, positiveCents } from "../domain/schemas";
 import { z } from "zod";
+import { validateInvoiceImport, type InvoiceImportItem } from "../domain/invoice-import";
 
 export function userCollection(uid: string, key: CollectionName) { return collection(firebase().db, "users", uid, key); }
 function ref(uid: string, key: CollectionName, id?: string) { return id ? doc(userCollection(uid, key), id) : doc(userCollection(uid, key)); }
@@ -187,6 +188,32 @@ export async function generateRecurrences(uid: string, rules: Recurrence[], thro
     }); count += added;
   }
   return count;
+}
+export async function importInvoice(uid: string, cardId: string, month: string, items: InvoiceImportItem[]) {
+  const valid = validateInvoiceImport(items, month);
+  const db = firebase().db;
+  return runTransaction(db, async tx => {
+    const targets = valid.map(item => ref(uid, "entries", `${item.id}_1`));
+    const existing = await Promise.all(targets.map(target => tx.get(target)));
+    const pending = valid.flatMap((item, index) => existing[index].exists() ? [] : [{ item, target: targets[index] }]);
+    if (!pending.length) return { added: 0, skipped: valid.length };
+    const card = await requireActive(tx, uid, "cards", cardId) as Omit<Card, "id">;
+    const paid = await tx.get(ref(uid, "entries", paymentId(cardId, month)));
+    if (paid.exists()) throw new Error("Esta fatura já foi paga. Não é possível adicionar compras.");
+    for (const categoryId of new Set(pending.map(({ item }) => item.categoryId))) {
+      const category = await requireActive(tx, uid, "categories", categoryId);
+      if (category.type !== "expense") throw new Error("Use categorias de despesa para importar compras.");
+    }
+    // Todas as leituras precedem as escritas; cada linha é somente a parcela desta fatura.
+    for (const { item, target } of pending) tx.set(target, {
+      ...emptyEntry, kind: "purchase", status: "pending", cardId, invoiceMonth: month,
+      description: item.description, date: item.date, amount: item.amount, categoryId: item.categoryId,
+      dueDate: monthDate(month, card.dueDay), groupId: item.id, installment: 1, installments: 1,
+      notes: "Importado do CSV Nubank. Lançamento somente desta fatura; não gera parcelas futuras.", createdAt: stamp(),
+    });
+    tx.update(ref(uid, "cards", cardId), { revision: card.revision + 1 });
+    return { added: pending.length, skipped: valid.length - pending.length };
+  });
 }
 // Tipos auxiliares exportados para a camada de interface.
 export type { Account, DocumentData };
