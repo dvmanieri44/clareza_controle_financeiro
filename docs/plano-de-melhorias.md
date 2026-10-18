@@ -1,5 +1,14 @@
 # Melhorias solicitadas
 
+## Itens 6 e 7 para portfólio — 18/10/2026
+
+- [x] Separar a tela central em dez módulos, controles/diálogos comuns e formulários reutilizados de transação e conta.
+- [x] Paginar transações no Firestore por cursor (25 por página), filtros no servidor, ordenação estável e resumos do filtro completo.
+- [x] Remover a assinatura global de transações; consultar recortes por funcionalidade, saldos cumulativos por agregação e exportação completa sob demanda.
+- [x] Versionar os índices compostos e incluir regressões de paginação, competência, transferências, faturas, saldos anteriores ao período e exportação.
+- [ ] Publicar os índices antes da interface e conferir consultas no Firebase real. O emulador local continua exigindo Java 21, indisponível nesta máquina.
+- [ ] Criar os commits locais: o Git bloqueou a escrita de `.git/index.lock`, e a execução ampliada falhou no helper. Os dois patches e as instruções estão em `artifacts/commits/` e `docs/commits-6-7.md`.
+
 ## Atualização de 18/10/2026
 
 - [x] Item 11 da lista para portfólio: regras de categorias por descrição inteira/palavras contidas, sugestões editáveis na prévia, memória opcional salva atomicamente com compras novas e destaque de compras semelhantes por descrição normalizada. Gerenciamento de regras nas configurações.

@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { BookOpen, Car, Heart, Home, Pencil, RotateCcw, Sparkles, Tag, Trash2, Utensils, Wallet } from "lucide-react";
+import { BookOpen, Car, Heart, Home, Pencil, RefreshCw, RotateCcw, Sparkles, Tag, Trash2, Utensils, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/providers";
 import { PageHeading } from "@/components/finance-ui";
@@ -28,7 +28,8 @@ const iconMap = { tag: Tag, utensils: Utensils, home: Home, car: Car, heart: Hea
 export function CategoryIcon({ category }: { category?: Category }) { const Icon = iconMap[category?.icon as keyof typeof iconMap] || Tag; return <span className="transaction-icon" style={{ color: category?.color, background: `${category?.color || "#64748b"}18` }}><Icon size={19} /></span>; }
 export function Actions({ edit, remove, restore, label }: { edit?: () => void; remove?: () => void; restore?: () => void; label: string }) { return <div className="flex items-center gap-1">{edit && <Button variant="ghost" size="icon" aria-label={`Editar ${label}`} onClick={edit}><Pencil /></Button>}{remove && <Button variant="ghost" size="icon" aria-label={`Excluir ou arquivar ${label}`} onClick={remove}><Trash2 /></Button>}{restore && <Button variant="ghost" size="icon" aria-label={`Restaurar ${label}`} onClick={restore}><RotateCcw /></Button>}</div>; }
 export function FeatureHeading({ section, month, setMonth, action }: { section: string; month?: string; setMonth?: (value: string) => void; action?: React.ReactNode }) {
-  return <PageHeading title={titles[section][0]} help={titles[section][1]} action={<>{setMonth && <label className="field-label">{section === "cartoes" ? "Fatura de" : "Mês"}<input type="month" className="input month-picker" value={month} onChange={event => { if (event.target.value) setMonth(event.target.value); }} required={section !== "transacoes"} />{!month && <span className="field-help">Todos os meses</span>}</label>}{action}</>} />;
+  const { refresh } = useFinance();
+  return <PageHeading title={titles[section][0]} help={titles[section][1]} action={<><Button variant="outline" size="icon" onClick={refresh} aria-label="Atualizar dados"><RefreshCw aria-hidden="true" /></Button>{setMonth && <label className="field-label">{section === "cartoes" ? "Fatura de" : "Mês"}<input type="month" className="input month-picker" value={month} onChange={event => { if (event.target.value) setMonth(event.target.value); }} required={section !== "transacoes"} />{!month && <span className="field-help">Todos os meses</span>}</label>}{action}</>} />;
 }
 export function useFinanceOptions() {
   const { user, data } = useFinance(); const uid = user!.uid;
@@ -41,11 +42,12 @@ export function useFinanceOptions() {
   return { user, uid, data, activeAccounts, activeCategories, activeCards, accountOptions, categoryOptions, needAccount };
 }
 export function useFeatureDialogs(uid: string) {
+  const { refresh } = useFinance();
   const [form, setForm] = useState<FormConfig | null>(null);
   const [confirmation, setConfirmation] = useState<{ title: string; description: string; action: () => Promise<void> } | null>(null);
   const [busy, setBusy] = useState(false);
   const confirmArchive = (key: "accounts" | "categories" | "cards" | "goals" | "investments" | "recurrences", id: string, archived: boolean) => setConfirmation({ title: archived ? "Restaurar registro?" : "Arquivar registro?", description: archived ? "O registro voltará a ficar disponível para novas operações." : "O registro sairá das opções para novas operações. O histórico e suas referências serão preservados. Você poderá restaurá-lo depois.", action: () => repo.archive(uid, key, id, !archived) });
-  const dialogs = <>{form && <FormDialog key={form.title + JSON.stringify(form.defaults)} config={form} close={() => setForm(null)} />}{confirmation && <Dialog open busy={busy} onOpenChange={open => { if (!open && !busy) setConfirmation(null); }} title={confirmation.title} description={confirmation.description}><div className="flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => setConfirmation(null)}>Cancelar</Button><Button disabled={busy} onClick={async () => { setBusy(true); try { await confirmation.action(); toast.success("Operação concluída."); setConfirmation(null); } catch (error) { toast.error(repo.errorMessage(error)); } finally { setBusy(false); } }}>{busy ? "Salvando…" : "Confirmar"}</Button></div></Dialog>}</>;
+  const dialogs = <>{form && <FormDialog key={form.title + JSON.stringify(form.defaults)} config={{ ...form, submit: async values => { await form.submit(values); refresh(); } }} close={() => setForm(null)} />}{confirmation && <Dialog open busy={busy} onOpenChange={open => { if (!open && !busy) setConfirmation(null); }} title={confirmation.title} description={confirmation.description}><div className="flex justify-end gap-2"><Button variant="outline" disabled={busy} onClick={() => setConfirmation(null)}>Cancelar</Button><Button disabled={busy} onClick={async () => { setBusy(true); try { await confirmation.action(); refresh(); toast.success("Operação concluída."); setConfirmation(null); } catch (error) { toast.error(repo.errorMessage(error)); } finally { setBusy(false); } }}>{busy ? "Salvando…" : "Confirmar"}</Button></div></Dialog>}</>;
   return { setForm, setConfirmation, confirmArchive, dialogs };
 }
 export function ArchiveToggle({ checked, onChange, items }: { checked: boolean; onChange: (value: boolean) => void; items: { archived: boolean }[] }) {

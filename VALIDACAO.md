@@ -1,5 +1,20 @@
 # Validação da implementação
 
+## Itens 6 e 7 — módulos e paginação, 18/10/2026
+
+- `npm run check` aprovado: lint sem avisos, TypeScript, **260 testes em doze arquivos** e build Node.
+- Os mesmos 260 testes passaram em UTC. Build Pages e `verify:pages` aprovados (12 rotas, 404 e 224 referências a assets).
+- A tela central agora seleciona dez módulos por funcionalidade. Formulários de conta/transação são reutilizados; controles e diálogos comuns ficam em `src/features/finance/`.
+- A lista consulta até 25 transações por página com cursor estável por data/valor/ID. Tipo, categoria, conta e período são enviados ao Firestore. A busca por substring percorre blocos do recorte e não se limita à página visível.
+- Foram removidas as assinaturas globais de `entries`, `goalMovements` e `snapshots`. Contas usam saldos cumulativos por agregação; dashboard combina recorte de seis meses com agregações anteriores ao período; cartões consultam mês e total em aberto; exportação busca todas as coleções em blocos.
+- Novos testes com banco simulado verificam 77 registros empatados em múltiplas páginas, competência diferente da data da compra, transferências nos dois sentidos, pendências, ordenação por valor, cursor de documento excluído, isolamento por UID/filtro, busca além da primeira página, cancelamento, totais completos, saldos anteriores ao período, faturas pagas e exportação de 405 registros.
+- O teste de combinações confere as consultas emitidas contra os **53 índices versionados**. Isso não substitui a construção e validação desses índices no Firebase real.
+- Acrescentado teste das consultas reais no emulador para paginação, agregação, valor com intervalo e bloqueio entre usuários. **Não executado localmente:** a tentativa confirmou Java 17 e exigência de Java 21+.
+- Cobertura continua sem medição: o provedor V8 não está instalado, e as duas tentativas de download (normal e ampliada) falharam com `EACCES`. O novo módulo puro `history.ts` entrou no escopo; as metas não foram reduzidas.
+- A interface mantém snapshots até atualização ao salvar, clicar em Atualizar dados, voltar o foco ou recuperar a conexão. Não há atualização global em tempo real do histórico; gravações concorrentes podem exigir atualização para sincronizar lista e totais.
+- O Git continuou bloqueando `.git/index.lock`, e a tentativa ampliada falhou no helper. A preparação dos dois patches não equivale a commits criados. Instruções em `docs/commits-6-7.md`.
+- Publicar `firestore.indexes.json` e aguardar os índices prontos antes da nova interface. Nenhum registro de produção foi migrado ou alterado para esta implementação. Validação visual e integração com Firebase real continuam pendentes.
+
 ## Atualização de 18/10/2026 — importação e conta
 
 - Implementados os itens 11 e 12: sugestões e memória opcional de categorias na importação, gerenciamento de regras, duplicatas por descrição normalizada, alteração de senha, privacidade e exclusão retomável da conta.

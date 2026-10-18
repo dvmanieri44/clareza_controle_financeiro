@@ -54,7 +54,7 @@ O `.env.local` fica somente na sua máquina e não é versionado. Em outro compu
    npx firebase deploy --only firestore:rules,firestore:indexes --project SEU_PROJECT_ID
    ```
 
-   Também pode publicar `firestore.rules` pela aba Regras do console. Não são necessários índices compostos nesta versão; `firestore.indexes.json` é intencionalmente vazio.
+   As consultas do histórico e as agregações agora exigem os índices compostos de `firestore.indexes.json`. Publique-os e aguarde ficarem prontos no console antes de publicar esta interface. O comando `npm run indexes:generate` reproduz os 53 índices das combinações suportadas de filtros, ordenação e resumos. Não altera registros financeiros.
 6. Reinicie, crie sua conta e cadastre uma conta financeira. O primeiro login cria somente categorias padrão e o perfil, sem valores fictícios.
 7. Registre receita/despesa, recarregue e confirme a persistência. Confira o e-mail de recuperação de senha.
 
@@ -158,13 +158,30 @@ Datas de negócio são dias locais `YYYY-MM-DD`, sem conversão UTC. `createdAt`
 src/app/             páginas, layouts, estilos e limites de erro
 src/components/ui/   componentes locais Radix/shadcn
 src/components/      sessão/dados, layout e formulários
-src/features/        autenticação, dashboard e módulos
+src/features/finance-screen.tsx   seleção da tela pela rota
+src/features/finance/             controles comuns, diálogos e consultas assíncronas
+src/features/transactions/        histórico paginado, filtros e formulário de transação
+src/features/accounts/            contas, transferências e formulário de conta
+src/features/{cards,budgets,goals,investments,categories,recurrences,settings,overview}/
+                                 telas e ações de cada funcionalidade
 src/lib/domain/      tipos, schemas Zod e cálculos puros
-src/lib/firebase/    inicialização e repositório transacional
+src/lib/firebase/    sessão, repositório transacional, histórico e consultas financeiras
 tests/               regras financeiras e de segurança
 ```
 
 Todo dado fica sob `users/{uid}`. O perfil possui createdAt/version. Todos os documentos incluem createdAt.
+
+### Histórico, saldos e atualização
+
+O provider mantém somente os cadastros em tempo real. Não assina a coleção inteira de transações nem os históricos de metas e investimentos. Cada funcionalidade consulta seus dados: transações por cursor, cartões e orçamentos pelo mês, dashboard pelos seis meses exibidos; históricos de metas/investimentos são buscados somente nessas telas. A exportação busca explicitamente todas as coleções em blocos de 200, incluindo registros que não estejam na tela.
+
+O histórico mostra **25 transações por página**, com Anterior/Próxima. Mês, tipo, categoria, conta e datas são aplicados no Firestore antes da paginação. O mês das compras usa a competência da fatura; as datas explícitas continuam usando a data da compra. As consultas separadas por tipo são mescladas com ordenação estável por data/valor e ID. Trocar filtros, usuário ou atualizar os dados reinicia os cursores. Não há migração ou regravação dos documentos existentes.
+
+Os indicadores do histórico somam todo o filtro, independentemente da página. Sem busca textual, usam `count`/`sum` no servidor. A busca por descrição preserva substring e caixa indiferente; como o Firestore não fornece esse operador, percorre os resultados do período em blocos, sem reter toda a coleção. Pode fazer muitas leituras em “Todos os meses”; restrinja mês e filtros. Consultas de busca obsoletas deixam de iniciar novos blocos quando os filtros mudam.
+
+Saldos atuais e evolução usam agregações cumulativas, incluindo movimentações anteriores aos seis meses visíveis e contas arquivadas. Transferências cancelam no saldo total e são computadas como origem/destino nos saldos por conta. Pagamentos de fatura reduzem saldo, sem contar como nova despesa. O limite em aberto do cartão usa compras menos pagamentos integrais; o pagamento consulta apenas a soma das compras da fatura e mantém a verificação transacional de revisão.
+
+Histórico e resumos são snapshots consultados ao abrir a tela, concluir uma operação, clicar em Atualizar dados, voltar o foco à janela ou recuperar a conexão. Não possuem uma assinatura global em tempo real: alterações de outro dispositivo aparecem após atualização. Respostas de usuários/filtros anteriores não são exibidas, e erros não são apresentados como totais zerados. A lista e os resumos usam consultas independentes; uma gravação concorrente pode exigir atualizar para sincronizá-los.
 
 | Subcoleção | Campos principais |
 | --- | --- |
@@ -197,7 +214,7 @@ Para verificar o aplicativo localmente, configure `.env.local` para o emulador: 
 
 ## Limitações explícitas
 
-- Coleções pessoais são carregadas em tempo real e filtradas no navegador. Históricos grandes exigirão paginação.
+- A lista de transações é paginada no Firestore. O dashboard ainda carrega os documentos dos seis meses exibidos, e os históricos de metas/investimentos são carregados ao abrir suas telas; volumes grandes nesses recortes podem exigir uma próxima etapa de agregação/paginação. A busca por substring pode percorrer todo o período filtrado.
 - Recorrências são geradas pelo usuário, sem agendador, até 120 ocorrências por regra. Ocorrências podem ser editadas, mas não excluídas. Para mudar próximos valores, pause a regra e crie outra.
 - Até 12 parcelas por compra para respeitar limites das regras. Não há edição de compras; exclua/recrie antes de pagar faturas relacionadas.
 - Faturas com pagamento integral apenas, sem estorno, pagamento parcial, rotativo, juros ou antecipação.

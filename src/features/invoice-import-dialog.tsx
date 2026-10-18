@@ -1,5 +1,5 @@
 "use client";
-import { useId, useRef, useState, type DragEvent } from "react";
+import { useCallback, useId, useRef, useState, type DragEvent } from "react";
 import { Check, FileUp, Loader2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog } from "@/components/ui/dialog";
@@ -11,6 +11,8 @@ import { money, moneyInput, parseMoney } from "@/lib/domain/finance";
 import { date as dateSchema, month as monthSchema, name, positiveCents } from "@/lib/domain/schemas";
 import { invoiceImportId, MAX_IMPORT_BYTES, MAX_IMPORT_SELECTION, parseNubankCsv, type InvoiceCsvRow } from "@/lib/domain/invoice-import";
 import { normalizeDescription, rememberedRules, similarPurchase, suggestCategory } from "@/lib/domain/import-rules";
+import { invoiceEntries } from "@/lib/firebase/finance-queries";
+import { ResourceStatus, useResource } from "@/features/finance/use-resource";
 
 interface ReviewRow extends InvoiceCsvRow { id: string; selected: boolean; amountText: string; categoryId: string; suggestedCategoryId: string; }
 
@@ -40,7 +42,11 @@ export function InvoiceImportDialog({ initialMonth, close, onImported }: { initi
   const [category, setCategory] = useState("");
   const [dragging, setDragging] = useState(false);
   const [rememberCategories, setRememberCategories] = useState(false);
-  const existing = new Set(data.entries.map(entry => entry.id));
+  const uid = user!.uid;
+  const loadInvoice = useCallback(() => cardId ? invoiceEntries(uid, cardId, month) : Promise.resolve([]), [uid, cardId, month]);
+  const invoice = useResource(`${uid}:invoice:${cardId}:${month}`, loadInvoice);
+  const entries = invoice.value || [];
+  const existing = new Set(entries.map(entry => entry.id));
   const duplicate = (row: ReviewRow) => existing.has(`${row.id}_1`);
   const isCredit = (row: ReviewRow) => row.amount !== null && row.amount <= 0;
   const selected = rows.filter(row => row.selected && !isCredit(row) && !duplicate(row));
@@ -51,7 +57,7 @@ export function InvoiceImportDialog({ initialMonth, close, onImported }: { initi
   const credits = rows.filter(isCredit);
   const importedCount = rows.filter(duplicate).length;
   const card = cards.find(item => item.id === cardId);
-  const paid = data.entries.some(entry => entry.kind === "invoicePayment" && entry.cardId === cardId && entry.invoiceMonth === month);
+  const paid = entries.some(entry => entry.kind === "invoicePayment" && entry.cardId === cardId && entry.invoiceMonth === month);
 
   function chooseFile(candidate?: File) {
     if (busy) return;
@@ -72,6 +78,7 @@ export function InvoiceImportDialog({ initialMonth, close, onImported }: { initi
     if (!cardId || !card) { setProblem("Escolha um cartão ativo."); return; }
     if (!monthSchema.safeParse(month).success) { setProblem("Escolha o mês de vencimento da fatura."); return; }
     if (!file) { setProblem("Selecione o CSV da fatura."); return; }
+    if (!invoice.value) { setProblem("Aguarde a consulta da fatura antes de conferir o arquivo."); return; }
     if (paid) { setProblem("Esta fatura já foi paga. Escolha uma fatura em aberto."); return; }
     setBusy(true);
     try {
@@ -87,7 +94,7 @@ export function InvoiceImportDialog({ initialMonth, close, onImported }: { initi
       const identifiers = await Promise.all(parsed.map(row => invoiceImportId(cardId, month, row.sourceKey)));
       const prepared: ReviewRow[] = parsed.map((row, index) => {
         const rowId = identifiers[index];
-        const manualMatch = similarPurchase(data.entries, cardId, month, row);
+        const manualMatch = similarPurchase(entries, cardId, month, row);
         const available = row.amount !== null && row.amount > 0 && !row.issues.length && !existing.has(`${rowId}_1`) && !manualMatch;
         const selected = available && count++ < MAX_IMPORT_SELECTION;
         const categoryId = suggestCategory(row.description, data.importRules, categories);
@@ -105,7 +112,7 @@ export function InvoiceImportDialog({ initialMonth, close, onImported }: { initi
   }
   async function confirm() {
     setProblem("");
-    if (!user || invalid.length || !selected.length || selected.length > MAX_IMPORT_SELECTION) return;
+    if (!user || !invoice.value || invalid.length || !selected.length || selected.length > MAX_IMPORT_SELECTION) return;
     if (paid) { setProblem("Esta fatura foi paga. Não é possível importar compras."); return; }
     setBusy(true);
     try {
@@ -128,8 +135,9 @@ export function InvoiceImportDialog({ initialMonth, close, onImported }: { initi
       </div>
       {!cards.length && <p className="error-box">Cadastre um cartão antes de importar a fatura.</p>}
       {!categories.length && <p className="error-box">Cadastre uma categoria de despesa antes de importar.</p>}
+      {!invoice.value && <ResourceStatus error={invoice.error} />}
       {problem && <p role="alert" className="error-box">{problem}</p>}
-      <div className="form-actions"><Button type="button" variant="outline" onClick={close} disabled={busy}>Cancelar</Button><Button disabled={busy || !cards.length || !categories.length}>{busy ? <><Loader2 aria-hidden="true" className="animate-spin" />Lendo arquivo…</> : "Conferir lançamentos"}</Button></div>
+      <div className="form-actions"><Button type="button" variant="outline" onClick={close} disabled={busy}>Cancelar</Button><Button disabled={busy || !invoice.value || !cards.length || !categories.length}>{busy ? <><Loader2 aria-hidden="true" className="animate-spin" />Lendo arquivo…</> : "Conferir lançamentos"}</Button></div>
     </form> : <div className="grid gap-5" aria-busy={busy}>
       <div className="import-summary"><div><h2 ref={summaryRef} tabIndex={-1} className="text-lg font-semibold">{card?.name} · {month.split("-").reverse().join("/")}</h2><p className="text-sm text-muted-foreground">{rows.length} linhas · {importedCount} já importadas · {credits.length} pagamentos/créditos fora da seleção</p></div><div><span className="text-sm text-muted-foreground">Compras selecionadas</span><p className="text-2xl font-semibold">{selected.length} · {money(total)}</p></div></div>
       <div className="import-category-tools"><label className="field-label" htmlFor={`${id}-category`}>Categoria das compras selecionadas<select id={`${id}-category`} className="input" value={category} onChange={event => setCategory(event.target.value)} disabled={busy}><option value="">Escolha uma categoria…</option>{categories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><Button type="button" variant="outline" disabled={busy || !category} onClick={() => setRows(old => old.map(row => row.selected && !isCredit(row) && !duplicate(row) ? { ...row, categoryId: category, suggestedCategoryId: "" } : row))}>Aplicar categoria</Button></div>
@@ -141,7 +149,7 @@ export function InvoiceImportDialog({ initialMonth, close, onImported }: { initi
             const credit = isCredit(row), exists = duplicate(row), issues = rowProblems(row);
             let currentAmount: number | null = null;
             try { currentAmount = parseMoney(row.amountText); } catch { /* O erro é exibido na conferência. */ }
-            const manualMatch = !exists && similarPurchase(data.entries, cardId, month, { ...row, amount: currentAmount });
+            const manualMatch = !exists && similarPurchase(entries, cardId, month, { ...row, amount: currentAmount });
             const locked = busy || credit || exists;
             const label = `linha ${row.line}: ${row.description}`;
             return <tr key={row.id} className={credit || exists ? "import-row-muted" : undefined}>
@@ -159,7 +167,8 @@ export function InvoiceImportDialog({ initialMonth, close, onImported }: { initi
       <div className="rounded-xl border border-border p-4"><label className="flex cursor-pointer items-start gap-3 text-sm"><input type="checkbox" className="mt-0.5 size-5 shrink-0 accent-primary" checked={rememberCategories} onChange={event => setRememberCategories(event.target.checked)} disabled={busy} /><span>Lembrar as categorias destas descrições nas próximas faturas<span className="mt-1 block text-muted-foreground">Ao confirmar, até {rulesToRemember.length} regra(s) de descrição inteira serão salvas ou atualizadas junto às compras novas. Gerencie em Configurações.</span></span></label>{rememberCategories && conflictingDescriptions && <p className="mt-3 text-sm text-muted-foreground">Descrições com categorias diferentes ou sem categoria válida não serão lembradas.</p>}</div>
       <p role="status" className={invalid.length || selected.length > MAX_IMPORT_SELECTION ? "text-sm text-destructive" : "sr-only"}>{invalid.length ? `Corrija ${invalid.length} linha(s) selecionada(s) antes de importar.` : selected.length > MAX_IMPORT_SELECTION ? `Selecione no máximo ${MAX_IMPORT_SELECTION} compras por vez.` : `${selected.length} compras selecionadas para conferência.`}</p>
       {problem && <p role="alert" className="error-box">{problem}</p>}
-      <div className="form-actions"><Button type="button" variant="outline" disabled={busy} onClick={() => { setReview(false); setRows([]); setProblem(""); }}>Voltar</Button><Button type="button" disabled={busy || !!invalid.length || !selected.length || selected.length > MAX_IMPORT_SELECTION || paid} onClick={() => void confirm()}>{busy ? <><Loader2 aria-hidden="true" className="animate-spin" />Importando…</> : `Confirmar ${selected.length} compra(s)`}</Button></div>
+      {!invoice.value && <ResourceStatus error={invoice.error} />}
+      <div className="form-actions"><Button type="button" variant="outline" disabled={busy} onClick={() => { setReview(false); setRows([]); setProblem(""); }}>Voltar</Button><Button type="button" disabled={busy || !invoice.value || !!invalid.length || !selected.length || selected.length > MAX_IMPORT_SELECTION || paid} onClick={() => void confirm()}>{busy ? <><Loader2 aria-hidden="true" className="animate-spin" />Importando…</> : `Confirmar ${selected.length} compra(s)`}</Button></div>
     </div>}
   </Dialog>;
 }

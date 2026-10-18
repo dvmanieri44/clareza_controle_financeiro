@@ -1,7 +1,12 @@
-import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { initializeTestEnvironment, assertFails, assertSucceeds, type RulesTestEnvironment } from "@firebase/rules-unit-testing";
 import { deleteDoc, doc, getDoc, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+const queryContext = vi.hoisted(() => ({ db: null as unknown }));
+vi.mock("@/lib/firebase/client", () => ({ firebase: () => ({ db: queryContext.db }) }));
+import { getHistoryPage, getHistorySummary } from "@/lib/firebase/history";
+import { totalBalance } from "@/lib/firebase/finance-queries";
+import type { HistoryCursor, HistoryFilters } from "@/lib/domain/history";
 let env: RulesTestEnvironment;
 const createdAt = "2026-10-16T12:00:00.000Z";
 const account = { name:"Banco",type:"Conta corrente",initialBalance:10000,color:"#167459",archived:false,createdAt };
@@ -11,6 +16,26 @@ beforeAll(async () => { env = await initializeTestEnvironment({projectId:"demo-f
 afterAll(async () => { await env?.cleanup(); });
 beforeEach(async () => { await env.clearFirestore(); await env.withSecurityRulesDisabled(async ctx => { const db=ctx.firestore(); await setDoc(doc(db,"users/alice/accounts/a"),account); await setDoc(doc(db,"users/alice/accounts/b"),account); await setDoc(doc(db,"users/alice/categories/c"),category); await setDoc(doc(db,"users/alice/cards/card"),{name:"Cartão",limit:100000,closingDay:5,dueDay:15,color:"#167459",archived:false,revision:1,createdAt}); }); });
 describe("isolamento e validação no Firestore", () => {
+  it("executa paginação e agregações reais no emulador e bloqueia consultas entre usuários", async () => {
+    await env.withSecurityRulesDisabled(async ctx => {
+      const db = ctx.firestore(); const batch = writeBatch(db);
+      for (let index = 0; index < 60; index++) batch.set(doc(db, `users/alice/entries/e${String(index).padStart(3, "0")}`), entry);
+      batch.set(doc(db, "users/alice/entries/imported"), { ...entry, kind: "purchase", accountId: "", cardId: "card", status: "pending", invoiceMonth: "2026-10", date: "2026-09-01", dueDate: "2026-10-15", amount: 5000, groupId: "imported", installment: 1, installments: 1 });
+      await batch.commit();
+    });
+    queryContext.db = env.authenticatedContext("alice").firestore();
+    const filters: HistoryFilters = { month: "2026-10", kind: "", accountId: "", categoryId: "", startDate: "", endDate: "", search: "", sort: "date-desc" };
+    const ids: string[] = []; let cursor: HistoryCursor | null = null;
+    do { const page = await getHistoryPage("alice", filters, cursor); ids.push(...page.entries.map(entry => entry.id)); cursor = page.next; } while (cursor);
+    expect(ids).toHaveLength(61); expect(new Set(ids).size).toBe(61);
+    expect(await getHistorySummary("alice", filters)).toEqual({ count: 61, income: 0, expense: 65000 });
+    expect(await totalBalance("alice", [], "2026-10-31")).toBe(-60000);
+    const byAmount = { ...filters, sort: "amount-desc" as const, startDate: "2026-09-01", endDate: "2026-10-31" };
+    expect((await getHistoryPage("alice", byAmount)).entries[0].id).toBe("imported");
+    queryContext.db = env.authenticatedContext("bob").firestore();
+    await assertFails(getHistoryPage("alice", filters));
+    await assertFails(getHistorySummary("alice", filters));
+  }, 30000);
   it("permite o proprietário e bloqueia terceiros e anônimos", async () => { const alice=env.authenticatedContext("alice").firestore(); const bob=env.authenticatedContext("bob").firestore(); const anon=env.unauthenticatedContext().firestore(); await assertSucceeds(getDoc(doc(alice,"users/alice/accounts/a"))); await assertFails(getDoc(doc(bob,"users/alice/accounts/a"))); await assertFails(getDoc(doc(anon,"users/alice/accounts/a"))); await assertFails(setDoc(doc(bob,"users/alice/entries/e"),entry)); });
   it("rejeita valores inválidos, extras e referências inexistentes", async () => { const db=env.authenticatedContext("alice").firestore(); await assertSucceeds(setDoc(doc(db,"users/alice/entries/e"),entry)); for (const patch of [{amount:1.5},{amount:-1},{amount:9000000000001},{accountId:"missing"},{categoryId:"missing"},{kind:"income"},{admin:true},{date:"bad"},{status:"paid"}]) await assertFails(setDoc(doc(db,"users/alice/entries/invalid"),{...entry,...patch})); });
   it("bloqueia alteração de saldo inicial e exclusões de mestres", async () => { const db=env.authenticatedContext("alice").firestore(); await assertFails(updateDoc(doc(db,"users/alice/accounts/a"),{initialBalance:0})); await assertFails(deleteDoc(doc(db,"users/alice/accounts/a"))); await assertFails(deleteDoc(doc(db,"users/alice/categories/c"))); await assertSucceeds(updateDoc(doc(db,"users/alice/categories/c"),{archived:true})); });

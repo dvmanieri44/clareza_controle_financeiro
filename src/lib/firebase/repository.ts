@@ -1,7 +1,7 @@
-import { collection, doc, getDocs, runTransaction, type DocumentData, type Transaction } from "firebase/firestore";
+import { collection, doc, getAggregateFromServer, query, sum, where, runTransaction, type DocumentData, type Transaction } from "firebase/firestore";
 import { firebase } from "./client";
 import type { Account, Card, CollectionMap, CollectionName, Entry, Goal, Investment, Recurrence } from "../domain/types";
-import { firstInvoiceMonth, goalAfterMovement, invoiceTotal, monthDate, paymentId, recurrenceOccurrences, shiftMonth, splitInstallments, today } from "../domain/finance";
+import { firstInvoiceMonth, goalAfterMovement, monthDate, paymentId, recurrenceOccurrences, shiftMonth, splitInstallments, today } from "../domain/finance";
 import { accountSchema, cardSchema, cents, date, entrySchema, name, positiveCents } from "../domain/schemas";
 import { z } from "zod";
 import { validateInvoiceImport, type InvoiceImportItem } from "../domain/invoice-import";
@@ -27,6 +27,7 @@ export function errorMessage(error: unknown) {
   if (code.includes("weak-password")) return "Use uma senha com pelo menos 8 caracteres.";
   if (code.includes("requires-recent-login")) return "Confirme sua senha atual novamente para continuar.";
   if (code.includes("auth/user-token-expired")) return "Sua sessão expirou. Entre novamente para continuar.";
+  if (code.includes("failed-precondition")) return "A consulta ainda não está disponível. Tente novamente em alguns minutos.";
   if (code.includes("invalid-api-key")) return "A configuração do Firebase é inválida. Verifique .env.local.";
   if (code.includes("auth/operation-not-allowed")) return "Habilite o provedor E-mail/senha no Firebase Authentication.";
   if (code.includes("auth/unauthorized-domain")) return "Adicione este domínio aos domínios autorizados do Firebase Authentication.";
@@ -125,8 +126,8 @@ export async function payInvoice(uid: string, cardId: string, month: string, acc
     const { getDoc } = await import("firebase/firestore");
     const before = await getDoc(cardRef);
     if (!before.exists()) throw new Error("Cartão não encontrado.");
-    const all = await getDocs(userCollection(uid, "entries"));
-    const total = invoiceTotal(all.docs.map(d => ({ ...d.data(), id: d.id }) as Entry), cardId, month);
+    const invoice = query(userCollection(uid, "entries"), where("kind", "==", "purchase"), where("cardId", "==", cardId), where("invoiceMonth", "==", month));
+    const total = (await getAggregateFromServer(invoice, { amount: sum("amount") })).data().amount;
     if (total <= 0) throw new Error("Esta fatura não possui compras.");
     try {
       await runTransaction(firebase().db, async tx => {
