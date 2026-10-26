@@ -1,6 +1,8 @@
-# Clareza · Organizador Financeiro
+# FINMEI · Organizador Financeiro
 
 Aplicativo pessoal em português brasileiro: Next.js App Router, TypeScript, Tailwind CSS, componentes locais no padrão shadcn/ui (Radix + CVA), Lucide, Firebase Auth/Firestore, React Hook Form, Zod, Recharts e date-fns. Dados financeiros vêm do Firestore, sem movimentações fictícias.
+
+O nome do produto é **FINMEI**. Os endereços do repositório e do GitHub Pages e os identificadores internos de armazenamento mantêm os valores anteriores para preservar os links e os dados já salvos.
 
 ## Instalação e comandos
 

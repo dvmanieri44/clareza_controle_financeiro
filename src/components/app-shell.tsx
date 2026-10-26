@@ -73,7 +73,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function SidebarContent({ pathname, email, onNavigate, logout }: { pathname: string; email: string; onNavigate: () => void; logout: () => Promise<void> }) {
   return <>
-    <Link href="/dashboard" className="brand" onClick={onNavigate}><span className="brand-symbol"><Leaf aria-hidden="true" size={23} /></span>clareza<span className="text-primary">.</span></Link>
+    <Link href="/dashboard" className="brand" onClick={onNavigate}><span className="brand-symbol"><Leaf aria-hidden="true" size={23} /></span>FINMEI<span className="text-primary">.</span></Link>
     <p className="nav-label">SEU ESPAÇO FINANCEIRO</p>
     <nav aria-label="Navegação principal" className="space-y-1">{nav.map(([key, label, Icon]) => <Link key={key} href={`/${key}`} onClick={onNavigate} aria-current={pathname === `/${key}` ? "page" : undefined} className={cn("nav-link", pathname === `/${key}` && "active")}><Icon aria-hidden="true" size={18} />{label}{pathname === `/${key}` && <span aria-hidden="true" className="ml-auto size-1.5 rounded-full bg-primary" />}</Link>)}</nav>
     <div className="mt-auto">

@@ -39,18 +39,18 @@ export function AuthScreen() {
   const action = mode === "signup" ? "Criar minha conta" : mode === "reset" ? "Enviar link" : "Entrar na minha conta";
   return <main className="auth-page">
     <a className="skip-link" href="#auth-form">Pular para o formulário</a>
-    <section className="auth-story" aria-label="Clareza, organizador financeiro">
-      <div className="brand text-white"><span className="brand-symbol bg-white/15"><Leaf aria-hidden="true" size={23} /></span>clareza.</div>
+    <section className="auth-story" aria-label="FINMEI, organizador financeiro">
+      <div className="brand text-white"><span className="brand-symbol bg-white/15"><Leaf aria-hidden="true" size={23} /></span>FINMEI.</div>
       <div><span className="text-sm tracking-widest text-emerald-100">UM NOVO OLHAR PARA SUAS FINANÇAS</span>
         <h2 className="mt-6 text-5xl font-medium leading-[1.12] tracking-tight">Seu dinheiro,<br />com direção.</h2>
         <p className="mt-6 max-w-sm">Organize o presente. Planeje o futuro.</p>
         <div className="mt-10 flex items-center gap-2 text-sm text-emerald-100"><ShieldCheck aria-hidden="true" size={18} />Seus dados, na sua conta.</div>
       </div>
-      <p className="text-sm">MENOS COMPLICAÇÃO. MAIS CLAREZA.</p>
+      <p className="text-sm">MENOS COMPLICAÇÃO. MAIS CONTROLE.</p>
     </section>
     <section id="auth-form" className="grid place-items-center px-6 py-12" aria-labelledby="auth-title">
       <div className="w-full max-w-sm">
-        <div className="brand mb-10 lg:hidden"><Leaf aria-hidden="true" />clareza.</div>
+        <div className="brand mb-10 lg:hidden"><Leaf aria-hidden="true" />FINMEI.</div>
         <span className="eyebrow">SEU ESPAÇO FINANCEIRO</span>
         <h1 id="auth-title" ref={titleRef} tabIndex={-1} className="mt-3 text-3xl font-semibold tracking-tight">{title}</h1>
         <p className="mb-8 mt-3 text-muted-foreground">{mode === "reset" ? "Enviaremos um link para redefinir sua senha." : "Entre para acompanhar suas finanças."}</p>

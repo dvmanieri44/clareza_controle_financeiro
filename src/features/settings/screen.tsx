@@ -25,7 +25,7 @@ export function SettingsScreen() {
     try {
       const data = await exportAllData(uid);
       const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), ...data }, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `clareza-${today()}.json`; link.click(); URL.revokeObjectURL(url); toast.success("Exportação concluída.");
+      const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `finmei-${today()}.json`; link.click(); URL.revokeObjectURL(url); toast.success("Exportação concluída.");
     } catch (error) { toast.error(errorMessage(error)); }
     finally { setExporting(false); }
   };
